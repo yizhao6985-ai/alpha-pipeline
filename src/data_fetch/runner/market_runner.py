@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..path_manager import build_trade_calendar_path
+from ..path_manager import build_trade_calendar_path, has_current_data
 from .common import DataFetchError, EmptyDataError, write_csv
 
 
@@ -19,6 +19,9 @@ def fetch_trade_calendar(
         start_date=start_date,
         end_date=today_ymd,
     )
+    if has_current_data(trade_calendar_path):
+        print(f"已存在，跳过交易日历数据: {trade_calendar_path}")
+        return
     print("正在获取交易日历数据...")
     try:
         trade_calendar_df = fetcher.fetch_trade_calendar(update_date=today_ymd).data

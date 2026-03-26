@@ -38,7 +38,7 @@ pip install -r requirements-dev.txt
 ```bash
 python scripts/fetch_market_data.py --help
 python scripts/generate_runtime_targets.py --help
-python scripts/csv_to_qlib_bin.py --help
+python scripts/build_target_quote_from_tushare.py --help
 python scripts/xls_to_csv.py --help
 ```
 

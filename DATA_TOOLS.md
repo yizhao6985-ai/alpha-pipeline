@@ -14,24 +14,16 @@ python scripts/xls_to_csv.py data/download/000852cons.xls
 - `--sheet-name`：指定工作表名
 - `--sheet-index`：指定工作表索引（默认 0）
 
-## 2) 按日期生成 Qlib 基础文件
+## 2) 目标特征行情生成
 
-脚本：`scripts/csv_to_qlib_bin.py`
+脚本：`scripts/build_target_quote_from_tushare.py`
 
-当前脚本用于从 `data/<日期>/` 生成 Qlib 的基础文本文件（不再生成 `.bin`）：
-
-- `qlib_data/<日期>/calendars/day.txt`
-- `qlib_data/<日期>/calendars/day_future.txt`
-- `qlib_data/<日期>/instruments/all.txt`
-- `qlib_data/<日期>/instruments/csi1000.txt`
+用于从 `qfq_daily/adj_factor` 生成目标特征行情 CSV（输出到 `qlib_data/<日期>/feature`）。
 
 示例：
 
 ```bash
-python scripts/csv_to_qlib_bin.py 20260324
+python scripts/build_target_quote_from_tushare.py \
+  --qfq-dir data/20260326/quote/qfq_daily \
+  --adj-dir data/20260326/quote/adj_factor
 ```
-
-可选参数：
-
-- `--data-root`：原始数据根目录（默认 `data`）
-- `--output-root`：Qlib 输出根目录（默认 `qlib_data`）

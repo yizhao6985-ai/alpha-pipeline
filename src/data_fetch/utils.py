@@ -42,6 +42,7 @@ def reset_today_output_dir(
     skip_qfq_daily: bool,
     skip_qfq_5min: bool,
     skip_daily_basic: bool,
+    skip_adj_factor: bool,
 ) -> None:
     today_dir = output_dir / today_ymd
     targets: list[Path] = [
@@ -64,6 +65,9 @@ def reset_today_output_dir(
         if not skip_daily_basic:
             targets.append(today_dir / "stock" / "daily_basic")
             targets.append(today_dir / "quote" / "daily_basic")
+        if not skip_adj_factor:
+            targets.append(today_dir / "stock" / "adj_factor")
+            targets.append(today_dir / "quote" / "adj_factor")
         if not skip_financial:
             targets.append(today_dir / "company" / "financial")
 

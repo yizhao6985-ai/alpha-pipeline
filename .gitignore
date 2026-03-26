@@ -18,4 +18,5 @@ __pycache__/
 # Generated data
 runtime/
 data/
+download/
 qlib_data/

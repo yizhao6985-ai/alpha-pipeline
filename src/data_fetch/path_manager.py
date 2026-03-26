@@ -125,6 +125,20 @@ def build_quote_daily_basic_path(
     return path
 
 
+def build_quote_adj_factor_path(
+    *,
+    base_dir: Path,
+    today_ymd: str,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+) -> Path:
+    parts = [_prefixed_ts_code_part(ts_code), "adj_factor", f"{start_date}_{end_date}"]
+    path = _dated_base_dir(base_dir=base_dir, today_ymd=today_ymd) / "quote" / "adj_factor" / f"{'_'.join(parts)}.csv"
+    ensure_directory(path.parent)
+    return path
+
+
 def build_trade_calendar_path(
     *,
     base_dir: Path,

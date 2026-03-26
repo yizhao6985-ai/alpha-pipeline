@@ -13,6 +13,7 @@ from ..datasets import (
     MARKET_TRADE_CALENDAR,
     STOCK_HSGT_LIST,
     STOCK_DAILY_BASIC,
+    STOCK_ADJ_FACTOR,
     STOCK_LIST,
     STOCK_QFQ_5MIN,
     STOCK_QFQ_DAILY,
@@ -30,6 +31,7 @@ from ..sources.tushare import (
     fetch_sh_stock_list,
     fetch_stock_hsgt_list,
     fetch_stock_daily_basic,
+    fetch_stock_adj_factor,
     fetch_stock_qfq_5min,
     fetch_stock_qfq_daily,
     fetch_stock_st_list,
@@ -155,6 +157,15 @@ class TushareDataSource:
         if dataset == STOCK_DAILY_BASIC:
             return FetchResult(
                 data=fetch_stock_daily_basic(
+                    ts_code=params["ts_code"],
+                    start_date=params["start_date"],
+                    end_date=params["end_date"],
+                )
+            )
+
+        if dataset == STOCK_ADJ_FACTOR:
+            return FetchResult(
+                data=fetch_stock_adj_factor(
                     ts_code=params["ts_code"],
                     start_date=params["start_date"],
                     end_date=params["end_date"],

@@ -13,6 +13,7 @@ from .datasets import (
     MARKET_TRADE_CALENDAR,
     STOCK_HSGT_LIST,
     STOCK_DAILY_BASIC,
+    STOCK_ADJ_FACTOR,
     STOCK_LIST,
     STOCK_QFQ_5MIN,
     STOCK_QFQ_DAILY,
@@ -239,6 +240,20 @@ class DataFetcher:
     ) -> FetchResult:
         return self.fetch(
             STOCK_DAILY_BASIC,
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def fetch_stock_adj_factor(
+        self,
+        *,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+    ) -> FetchResult:
+        return self.fetch(
+            STOCK_ADJ_FACTOR,
             ts_code=ts_code,
             start_date=start_date,
             end_date=end_date,

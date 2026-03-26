@@ -38,6 +38,7 @@ python scripts/generate_runtime_targets.py \
 - `--skip-qfq-daily`：跳过 A 股前复权日线行情抓取
 - `--skip-qfq-5min`：跳过 A 股前复权 5 分钟行情抓取
 - `--skip-daily-basic`：跳过 A 股每日指标抓取
+- `--skip-adj-factor`：跳过 A 股复权因子（adj_factor）抓取
 
 ## Runtime 配置
 
@@ -72,3 +73,4 @@ python scripts/generate_runtime_targets.py \
 - `data/YYYYMMDD/quote/qfq_daily`
 - `data/YYYYMMDD/quote/qfq_5min`
 - `data/YYYYMMDD/quote/daily_basic`
+- `data/YYYYMMDD/quote/adj_factor`

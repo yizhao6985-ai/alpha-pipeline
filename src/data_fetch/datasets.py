@@ -14,6 +14,7 @@ STOCK_LIST = "stock.list"
 STOCK_QFQ_DAILY = "stock.qfq_daily"
 STOCK_QFQ_5MIN = "stock.qfq_5min"
 STOCK_DAILY_BASIC = "stock.daily_basic"
+STOCK_ADJ_FACTOR = "stock.adj_factor"
 STOCK_ST_LIST = "stock.st_list"
 
 SUPPORTED_DATASETS = (
@@ -29,5 +30,6 @@ SUPPORTED_DATASETS = (
     STOCK_QFQ_DAILY,
     STOCK_QFQ_5MIN,
     STOCK_DAILY_BASIC,
+    STOCK_ADJ_FACTOR,
     STOCK_ST_LIST,
 )

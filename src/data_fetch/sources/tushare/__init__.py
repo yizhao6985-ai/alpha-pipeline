@@ -8,6 +8,7 @@ from .stock_company import fetch_sh_stock_company, fetch_sz_stock_company
 from .stock_hsgt import fetch_stock_hsgt_list
 from .stock_qfq_5min import fetch_stock_qfq_5min
 from .stock_daily_basic import fetch_stock_daily_basic
+from .stock_adj_factor import fetch_stock_adj_factor
 from .stock_qfq_daily import fetch_stock_qfq_daily
 from .stock_st import fetch_stock_st_list
 from .trade_calendar import fetch_trade_calendar
@@ -23,6 +24,7 @@ __all__ = [
     "fetch_stock_hsgt_list",
     "fetch_stock_qfq_5min",
     "fetch_stock_daily_basic",
+    "fetch_stock_adj_factor",
     "fetch_stock_qfq_daily",
     "fetch_stock_st_list",
     "fetch_sz_stock_company",

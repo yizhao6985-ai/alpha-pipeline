@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..path_manager import build_index_basic_path, build_index_weight_path
+from ..path_manager import build_index_basic_path, build_index_weight_path, has_current_data, has_current_index_basic_data
 from ..runtime import (
     get_default_index_basic_markets,
     get_default_index_codes,
@@ -21,6 +21,12 @@ def fetch_stock_index_basic(
     fetcher,
     index_basic_markets: tuple[str, ...],
 ) -> None:
+    if index_basic_markets and all(
+        has_current_index_basic_data(base_dir=output_dir, today_ymd=today_ymd, market=market)
+        for market in index_basic_markets
+    ):
+        print("股票类指数基础信息文件已存在，跳过获取")
+        return
     print("正在获取股票类指数基础信息...")
     try:
         index_basic_df = fetcher.fetch_market_index_basic().data
@@ -44,6 +50,9 @@ def fetch_stock_index_basic(
                 market=market,
                 category=category_name,
             )
+            if has_current_data(output_path):
+                print(f"- 已存在，跳过 {market}/{category_name} 股票类指数基础信息: {output_path}")
+                continue
             write_csv(category_df.reset_index(drop=True), output_path)
             print(f"- {market}/{category_name} 股票类指数基础信息记录数: {len(category_df)}，已保存: {output_path}")
 
@@ -67,6 +76,9 @@ def fetch_default_index_weights(
             today_ymd=today_ymd,
             index_code=index_code,
         )
+        if has_current_data(output_path):
+            print(f"已存在，跳过指数成分和权重: {index_code}\n  文件: {output_path}")
+            continue
         print(f"正在获取指数成分和权重: {index_code} ...")
         try:
             index_weight_df = fetcher.fetch_market_index_weight(index_code=index_code).data

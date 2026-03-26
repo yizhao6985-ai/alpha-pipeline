@@ -30,4 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="跳过A股每日指标（daily_basic）抓取（默认不跳过）",
     )
+    common_group.add_argument(
+        "--skip-adj-factor",
+        action="store_true",
+        help="跳过A股复权因子（adj_factor）抓取（默认不跳过）",
+    )
     return parser
