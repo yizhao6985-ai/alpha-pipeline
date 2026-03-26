@@ -18,7 +18,7 @@ python scripts/xls_to_csv.py data/download/000852cons.xls
 
 脚本：`scripts/build_target_quote_from_tushare.py`
 
-用于从 `qfq_daily/adj_factor` 生成目标特征行情 CSV（输出到 `qlib_data/<日期>/feature`）。
+用于从 `qfq_daily/adj_factor` 生成目标特征行情 CSV（输出到 `qlib_data/<日期>/features`）。
 
 示例：
 

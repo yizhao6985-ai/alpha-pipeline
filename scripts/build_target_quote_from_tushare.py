@@ -276,7 +276,7 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=None,
-        help="批量模式：输出目录路径，默认自动推断为 qlib_data/<日期>/feature",
+        help="批量模式：输出目录路径，默认自动推断为 qlib_data/<日期>/features",
     )
     parser.add_argument(
         "--factor-mode",
@@ -322,7 +322,7 @@ def main() -> None:
         raise ValueError("批量模式必须提供 --qfq-dir")
     if args.output_dir is None:
         date_part = infer_date_from_qfq_dir(args.qfq_dir)
-        args.output_dir = Path("qlib_data") / date_part / "feature"
+        args.output_dir = Path("qlib_data") / date_part / "features"
     qfq_files = sorted(args.qfq_dir.glob("*.csv"))
     if not qfq_files:
         raise ValueError(f"qfq 目录下没有 CSV 文件: {args.qfq_dir}")
