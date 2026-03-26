@@ -1,0 +1,21 @@
+.DS_Store
+
+# IDE files
+.cursor/
+
+# Python environment
+.venv/
+
+# Python cache
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# Local environment files
+.env
+
+# Generated data
+runtime/
+data/
+qlib_data/
