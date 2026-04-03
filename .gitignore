@@ -9,14 +9,16 @@
 # Python cache
 __pycache__/
 .pytest_cache/
-.ruff_cache/
 *.pyc
+
+# Conda environments
+.conda/
+env/
 
 # Local environment files
 .env
 
 # Generated data
-runtime/
 data/
 download/
 qlib_data/

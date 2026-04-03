@@ -1,0 +1,12 @@
+name: quant-data-foundry
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python>=3.12
+  - pip
+  - pandas
+  - pip:
+      - python-dotenv
+      - tushare
+      - xlrd

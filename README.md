@@ -1,57 +1,71 @@
 # quant-data-foundry
 
-专注于市场数据获取、清洗和 Qlib 结构化准备的数据处理项目。
+专注于 A 股市场数据获取的数据处理项目。
+
+## 快速开始
+
+```bash
+# 1. 初始化（创建环境 + 配置模板）
+make setup
+
+# 2. 编辑 .env 填入 Tushare Token
+# TUSHARE_TOKEN=your_tushare_token_here
+
+# 3. 激活环境
+conda activate quant-data-foundry
+
+# 4. 获取演示数据（2只股票）
+make fetch-demo
+```
 
 ## 项目结构
 
 ```
 quant-data-foundry/
-├── src/data_fetch/            # 数据获取与落盘逻辑
-├── src/data_tools/            # 数据转换与 Qlib 元数据构建
 ├── scripts/                   # 脚本入口
-├── data/                      # 原始/中间数据输出目录
-├── qlib_data/                 # Qlib 格式相关输出
-├── runtime/                   # 运行时目标配置
-├── tests/                     # 测试
-├── pyproject.toml             # 项目与工具配置
-├── requirements.txt           # 运行依赖
-└── requirements-dev.txt       # 开发依赖
+│   ├── fetch_market_data.py          # 主数据获取脚本
+│   ├── fetchers/                     # 数据获取模块
+│   │   ├── base.py                   # 基础工具
+│   │   ├── stock.py                  # 股票数据
+│   │   ├── company.py                # 公司数据
+│   │   ├── index.py                  # 指数数据
+│   │   ├── market.py                 # 市场数据
+│   │   └── quote.py                  # 行情数据
+│   └── xls_to_csv.py                 # XLS 转 CSV 工具
+├── data/                      # 原始数据输出目录
+├── Makefile                   # 快捷命令
+├── environment.yml            # Conda 环境配置
+└── .env.example               # 环境变量模板
 ```
 
-## 安装
+## 常用命令
+
+### Makefile 快捷命令
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
+make help              # 显示所有命令
+make setup             # 初始化环境和配置
+make fetch             # 获取所有数据（所有主板股票）
+make fetch-quick       # 快速获取基础数据
+make fetch-demo        # 获取演示数据（2只股票）
+make fetch-stocks      # 获取指定股票
+make lint              # 代码检查
 ```
 
-## 使用说明
-
-所有使用说明统一放在根目录 Markdown 文件：
-
-- 数据抓取与目录规则：`DATA_FETCH.md`
-- `csv/xls` 和 Qlib 辅助脚本说明：`DATA_TOOLS.md`
-
-常用命令：
+### 示例
 
 ```bash
-python scripts/fetch_market_data.py --help
-python scripts/generate_runtime_targets.py --help
-python scripts/build_target_quote_from_tushare.py --help
-python scripts/xls_to_csv.py --help
+# 快速获取基础数据（股票列表、指数、日历等）
+make fetch-quick
+
+# 获取指定股票数据
+make fetch-stocks CODES=600000.SH,000001.SZ
+
+# 获取所有主板股票数据（耗时较长）
+make fetch
+
+# 直接运行脚本
+python scripts/fetch_market_data.py --ts-codes 600000.SH,000001.SZ
 ```
 
-## 环境变量
-
-使用 `tushare` 前请先配置 `.env`：
-
-```bash
-cp .env.example .env
-```
-
-并填写：
-
-```bash
-TUSHARE_TOKEN=your_tushare_token_here
-```
+详细说明请参考 `AGENTS.md`。
