@@ -12,7 +12,7 @@ from .base import get_tushare_pro, save_csv, file_exists_and_not_empty
 def fetch_trade_calendar(output_dir: Path, today_ymd: str, start_date: str) -> None:
     """获取交易日历"""
     pro = get_tushare_pro()
-    path = output_dir / today_ymd / "calendar" / "calendar" / f"calendar_{start_date}_{today_ymd}.csv"
+    path = output_dir / today_ymd / "calendar" / "trade_calendar.csv"
 
     if file_exists_and_not_empty(path):
         print(f"已存在，跳过: {path}")

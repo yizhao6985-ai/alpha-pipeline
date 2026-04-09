@@ -20,5 +20,5 @@ env/
 
 # Generated data
 data/
-download/
 qlib_data/
+processed_data/

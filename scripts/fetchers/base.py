@@ -40,7 +40,6 @@ def save_csv(df: pd.DataFrame, path: Path) -> None:
     """保存 DataFrame 为 CSV 文件"""
     ensure_dir(path)
     df.to_csv(path, index=False, encoding="utf-8-sig")
-    print(f"  已保存: {path}")
 
 
 def file_exists_and_not_empty(path: Path) -> bool:

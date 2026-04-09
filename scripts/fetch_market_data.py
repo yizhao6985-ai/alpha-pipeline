@@ -22,23 +22,23 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from fetchers import (
     fetch_stock_list,
-    get_all_stock_codes,
-    fetch_stock_hsgt,
     fetch_stock_st,
-    fetch_company_basic_info,
     fetch_financial_statements,
     fetch_index_basic,
     fetch_index_weight,
     fetch_trade_calendar,
     fetch_qfq_daily,
     fetch_daily_basic,
-    fetch_adj_factor,
+    fetch_cyq_perf,
     get_tushare_pro,
 )
 
+import pandas as pd
+
 # 常量
 DEFAULT_FETCH_START_DATE = "20180101"
-DEFAULT_INDEX_CODES = ["399300.SZ", "000001.SH"]
+# 默认指数代码：中证全指、中证100、沪深300、中证500、中证1000
+DEFAULT_INDEX_CODES = ["000985.CSI", "000903.SH", "399300.SZ", "000905.SH", "000852.SH"]
 
 
 def get_default_fetch_end_date() -> str:
@@ -50,19 +50,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=str, default="data", help='输出根目录，默认 "data"')
     parser.add_argument("--start-date", type=str, default=DEFAULT_FETCH_START_DATE, help=f"开始日期，默认 {DEFAULT_FETCH_START_DATE}")
     parser.add_argument("--end-date", type=str, default=None, help="结束日期，默认为今天")
-    parser.add_argument("--ts-codes", type=str, default=None, help="股票代码列表，逗号分隔（如 600000.SH,000001.SZ），不传则获取全部主板股票")
+    parser.add_argument("--ts-codes", type=str, default=None, help="股票代码列表，逗号分隔（如 600000.SH,000001.SZ），不传则使用中证全指成分股")
     parser.add_argument("--index-codes", type=str, default=None, help=f"指数代码列表，逗号分隔，默认 {','.join(DEFAULT_INDEX_CODES)}")
     parser.add_argument("--skip-stock-list", action="store_true", help="跳过股票列表获取")
-    parser.add_argument("--skip-hsgt", action="store_true", help="跳过沪深港通股票列表")
+
     parser.add_argument("--skip-st", action="store_true", help="跳过 ST 股票列表")
-    parser.add_argument("--skip-company", action="store_true", help="跳过公司基本信息")
     parser.add_argument("--skip-index-basic", action="store_true", help="跳过指数基础信息")
     parser.add_argument("--skip-index-weight", action="store_true", help="跳过指数成分权重")
     parser.add_argument("--skip-calendar", action="store_true", help="跳过交易日历")
     parser.add_argument("--skip-qfq-daily", action="store_true", help="跳过日线行情")
     parser.add_argument("--skip-daily-basic", action="store_true", help="跳过每日指标")
-    parser.add_argument("--skip-adj-factor", action="store_true", help="跳过复权因子")
+    parser.add_argument("--skip-cyq", action="store_true", help="跳过每日筹码及胜率")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务报表")
+    parser.add_argument("--workers", type=int, default=8, help="并发下载线程数，默认 8")
     return parser
 
 
@@ -98,18 +98,12 @@ def main():
     print("=" * 60)
 
     try:
-        # 基础数据（不依赖股票代码列表）
+        # 步骤1: 获取基础数据（股票列表、ST、指数、日历）
         if not args.skip_stock_list:
             fetch_stock_list(output_dir, end_date)
 
-        if not args.skip_hsgt:
-            fetch_stock_hsgt(output_dir, end_date, start_date)
-
         if not args.skip_st:
             fetch_stock_st(output_dir, end_date)
-
-        if not args.skip_company:
-            fetch_company_basic_info(output_dir, end_date)
 
         if not args.skip_index_basic:
             fetch_index_basic(output_dir, end_date)
@@ -120,32 +114,39 @@ def main():
         if not args.skip_calendar:
             fetch_trade_calendar(output_dir, end_date, start_date)
 
-        # 获取股票代码列表
+        # 步骤2: 获取股票代码列表
         if args.ts_codes:
             ts_codes = [code.strip() for code in args.ts_codes.split(",")]
         else:
-            # 实时获取所有主板股票代码
-            ts_codes = get_all_stock_codes()
+            # 从已保存的股票列表文件读取（中证全指成分股）
+            stock_list_path = output_dir / end_date / "stock" / "stock_list" / "stock_list.csv"
+            if stock_list_path.exists():
+                df = pd.read_csv(stock_list_path, encoding="utf-8")
+                ts_codes = df["ts_code"].astype(str).tolist()
+                print(f"\n从股票列表文件读取: {len(ts_codes)} 只")
+            else:
+                print("\n错误: 未找到股票列表文件，请先运行 --skip-qfq-daily 等跳过行情数据的命令获取基础数据")
+                ts_codes = []
 
-        if ts_codes:
-            print(f"\n将获取以下 {len(ts_codes)} 只股票的数据:")
-            print(f"  {', '.join(ts_codes[:10])}{'...' if len(ts_codes) > 10 else ''}")
-
-            # 行情数据
-            if not args.skip_qfq_daily:
-                fetch_qfq_daily(output_dir, end_date, ts_codes, start_date, end_date)
-
-            if not args.skip_daily_basic:
-                fetch_daily_basic(output_dir, end_date, ts_codes, start_date, end_date)
-
-            if not args.skip_adj_factor:
-                fetch_adj_factor(output_dir, end_date, ts_codes, start_date, end_date)
-
-            # 财务报表
-            if not args.skip_financial:
-                fetch_financial_statements(output_dir, end_date, ts_codes, start_date, end_date)
-        else:
+        if not ts_codes:
             print("\n没有指定股票代码，跳过个股数据获取")
+            return
+
+        print(f"\n将获取以下 {len(ts_codes)} 只股票的数据:")
+        print(f"  {', '.join(ts_codes[:10])}{'...' if len(ts_codes) > 10 else ''}")
+
+        # 步骤3: 获取个股相关数据（行情、财报）
+        if not args.skip_qfq_daily:
+            fetch_qfq_daily(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
+
+        if not args.skip_daily_basic:
+            fetch_daily_basic(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
+
+        if not args.skip_cyq:
+            fetch_cyq_perf(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
+
+        if not args.skip_financial:
+            fetch_financial_statements(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
 
         print("=" * 60)
         print("数据获取完成")

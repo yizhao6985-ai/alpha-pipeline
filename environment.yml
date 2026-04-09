@@ -9,4 +9,4 @@ dependencies:
   - pip:
       - python-dotenv
       - tushare
-      - xlrd
+      - tqdm

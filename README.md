@@ -31,7 +31,6 @@ quant-data-foundry/
 │   │   ├── index.py                  # 指数数据
 │   │   ├── market.py                 # 市场数据
 │   │   └── quote.py                  # 行情数据
-│   └── xls_to_csv.py                 # XLS 转 CSV 工具
 ├── data/                      # 原始数据输出目录
 ├── Makefile                   # 快捷命令
 ├── environment.yml            # Conda 环境配置

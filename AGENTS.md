@@ -18,7 +18,8 @@
 - `tushare` - A 股数据源
 - `pandas` - 数据处理
 - `python-dotenv` - 环境变量管理
-- `xlrd` - Excel 文件读取
+- `tqdm` - 进度条显示
+- `concurrent.futures` - 并发下载（Python 内置）
 
 ## 项目结构
 
@@ -29,14 +30,13 @@ quant-data-foundry/
 │   ├── fetchers/                     # 数据获取模块
 │   │   ├── __init__.py
 │   │   ├── base.py                   # 基础工具（Tushare客户端、文件操作）
-│   │   ├── stock.py                  # 股票相关数据（股票列表、ST、沪深港通）
+│   │   ├── stock.py                  # 股票相关数据（股票列表、ST）
 │   │   ├── company.py                # 公司相关数据（公司信息、财报）
 │   │   ├── index.py                  # 指数相关数据（指数信息、成分权重）
 │   │   ├── market.py                 # 市场相关数据（交易日历）
 │   │   └── quote.py                  # 行情数据（日线、指标、复权因子）
-│   └── xls_to_csv.py                 # XLS 转 CSV 工具
+│   └── process_to_qlib.py            # 数据处理脚本（生成 Qlib 格式）
 ├── data/                      # 原始数据输出目录（gitignored）
-├── download/                  # 下载文件目录（gitignored）
 ├── environment.yml            # Conda 环境配置
 ├── .env.example               # 环境变量模板
 ├── README.md                  # 项目说明
@@ -90,8 +90,10 @@ cp .env.example .env
 | `make fetch-quick` | 快速获取基础数据（跳过财报和行情） |
 | `make fetch-demo` | 获取演示数据（2只股票） |
 | `make fetch-stocks CODES=xxx` | 获取指定股票 |
+
 | `make clean` | 清理行情和财报数据 |
 | `make lint` | 代码语法检查 |
+| `make process` | 处理数据生成 Qlib 格式 |
 
 ### 常用示例
 
@@ -114,7 +116,7 @@ make fetch
 | 脚本 | 用途 | 示例 |
 |------|------|------|
 | `fetch_market_data.py` | 获取市场数据 | `python scripts/fetch_market_data.py` |
-| `xls_to_csv.py` | XLS 转 CSV | `python scripts/xls_to_csv.py data/download/file.xls` |
+| `process_to_qlib.py` | 处理数据生成 Qlib 格式 | `python scripts/process_to_qlib.py` |
 
 ### 数据获取脚本参数
 
@@ -126,34 +128,37 @@ python scripts/fetch_market_data.py --help
 - `--output-dir`: 输出根目录，默认 "data"
 - `--start-date`: 开始日期，默认 "20180101"
 - `--end-date`: 结束日期，默认为今天
-- `--ts-codes`: 股票代码列表，逗号分隔。不传则自动获取全部主板股票
-- `--index-codes`: 指数代码列表，逗号分隔，默认 "399300.SZ,000001.SH"
+- `--ts-codes`: 股票代码列表，逗号分隔。不传则自动获取全部A股
+- `--market`: 指定市场类型（主板/创业板/科创板/北交所），默认获取所有A股
+- `--index-codes`: 指数代码列表，逗号分隔，默认 "000985.CSI,000903.SH,399300.SZ,000905.SH,000852.SH"（中证全指、中证100、沪深300、中证500、中证1000）
+- `--workers`: 并发下载线程数，默认 8（根据 Tushare 积分调整）
 - `--skip-stock-list`: 跳过股票列表获取
-- `--skip-hsgt`: 跳过沪深港通股票列表
 - `--skip-st`: 跳过 ST 股票列表
-- `--skip-company`: 跳过公司基本信息
 - `--skip-index-basic`: 跳过指数基础信息
 - `--skip-index-weight`: 跳过指数成分权重
 - `--skip-calendar`: 跳过交易日历
 - `--skip-qfq-daily`: 跳过日线行情
 - `--skip-daily-basic`: 跳过每日指标
-- `--skip-adj-factor`: 跳过复权因子
+- `--skip-cyq`: 跳过每日筹码及胜率
 - `--skip-financial`: 跳过财务报表
 
 ### 数据获取示例
 
 ```bash
-# 获取所有主板股票数据（股票列表实时获取）
+# 获取中证全指成分股数据（默认）
 python scripts/fetch_market_data.py
+
+# 处理数据生成 Qlib 格式（排除 ST 股票）
+python scripts/process_to_qlib.py
 
 # 只获取指定股票
 python scripts/fetch_market_data.py --ts-codes 600000.SH,000001.SZ
 
-# 指定指数代码
-python scripts/fetch_market_data.py --index-codes 399300.SZ,000001.SH,000016.SH
+# 指定指数代码（默认已包含中证全指、中证100、沪深300、中证500、中证1000）
+python scripts/fetch_market_data.py --index-codes 399300.SZ,000001.SH
 
 # 跳过某些数据类型
-python scripts/fetch_market_data.py --skip-financial --skip-adj-factor
+python scripts/fetch_market_data.py --skip-financial
 
 # 指定日期范围
 python scripts/fetch_market_data.py --start-date 20240101 --end-date 20241231
@@ -165,25 +170,26 @@ python scripts/fetch_market_data.py --start-date 20240101 --end-date 20241231
 
 ```
 data/YYYYMMDD/
-├── company/
-│   ├── company_basic_info/     # 公司基本信息
-│   └── financial/              # 财务报表
-│       ├── balancesheet/
-│       ├── income/
-│       └── cashflow/
+├── company/                    # 公司基本信息 ({ts_code}.csv)
+└── financial/                  # 财务报表
+    ├── balancesheet/           # 资产负债表 ({ts_code}.csv)
+    ├── income/                 # 利润表 ({ts_code}.csv)
+    └── cashflow/               # 现金流量表 ({ts_code}.csv)
+├── index/
+│   ├── index_basic/            # 指数基础信息 ({market}_{category}.csv)
+│   └── index_weight/           # 指数成分权重 ({index_code}.csv)
+├── calendar/
+│   └── trade_calendar.csv      # 交易日历
+├── stock/
+│   ├── stock_list.csv          # 股票列表（中证全指成分股）
+│   └── st_stock_list.csv       # ST 股票列表
 ├── index/
 │   ├── index_basic/            # 指数基础信息
-│   └── index_weight/           # 指数成分权重
-├── calendar/
-│   └── calendar/               # 交易日历
-├── stock/
-│   ├── hsgt_stock_list/        # 沪深港通股票列表
-│   ├── stock_list/             # 股票列表
-│   └── st_stock_list/          # ST 股票列表
+│   └── index_weight/           # 指数成分权重 ({index_code}.csv)
 └── quote/
-    ├── qfq_daily/              # 前复权日线行情
-    ├── daily_basic/            # 每日指标
-    └── adj_factor/             # 复权因子
+    ├── qfq/                    # 前复权日线行情 ({ts_code}.csv)
+    ├── basic/                  # 每日指标 ({ts_code}.csv)
+    └── cyq/                    # 每日筹码及胜率 ({ts_code}.csv)
 ```
 
 ## 模块说明
@@ -203,7 +209,7 @@ data/YYYYMMDD/
 
 ### fetchers/company.py
 公司相关数据：
-- `fetch_company_basic_info(...)` - 公司基本信息
+- `fetch_company_basic_info(...)` - 公司基本信息（指定股票列表）
 - `fetch_financial_statements(...)` - 财务报表
 
 ### fetchers/index.py
@@ -219,7 +225,44 @@ data/YYYYMMDD/
 行情数据：
 - `fetch_qfq_daily(...)` - 前复权日线
 - `fetch_daily_basic(...)` - 每日指标
-- `fetch_adj_factor(...)` - 复权因子
+
+### process_to_qlib.py
+数据处理脚本，将原始数据转换为 Qlib 格式：
+- 排除 ST 股票
+- 合并行情数据和每日指标
+- 生成 `qlib_data.csv` - 主数据文件
+- 生成 `instruments.txt` - 股票列表及时间范围
+- 生成 `calendars.txt` - 交易日历
+
+参数：
+- `--data-dir`: 原始数据目录，默认 "data"
+- `--date`: 数据日期，默认使用最新日期
+- `--output-dir`: 输出目录，默认 "qlib_data"
+- `--output-file`: 输出文件名，默认 "qlib_data.csv"
+
+使用示例：
+```bash
+# 使用最新数据日期
+python scripts/process_to_qlib.py
+
+# 指定数据日期
+python scripts/process_to_qlib.py --date 20260408
+
+# 指定输出目录
+python scripts/process_to_qlib.py --output-dir my_qlib_data
+```
+
+输出文件结构：
+```
+qlib_data/
+├── qlib_data.csv       # 主数据文件（合并后的行情+指标）
+├── instruments.txt     # 股票列表（symbol\tstart_date\tend_date）
+└── calendars.txt       # 交易日历（日期列表）
+```
+
+CSV 列说明：
+- 基础列：`date`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `money`
+- 指标列：`turnover_rate`, `pe`, `pe_ttm`, `pb`, `ps`, `total_mv`, `circ_mv` 等
 
 ## 代码风格
 

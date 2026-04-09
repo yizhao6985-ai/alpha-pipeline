@@ -1,13 +1,14 @@
 # quant-data-foundry Makefile
 # 用于简化数据获取任务的常用命令
 
-.PHONY: help env install fetch fetch-quick clean lint
+.PHONY: help env install fetch fetch-quick clean lint process
 
 # 默认目标
 help:
 	@echo "quant-data-foundry 常用命令"
 	@echo ""
 	@echo "  make env          - 创建 conda 环境"
+	@echo "  make activate     - 显示激活环境命令"
 	@echo "  make install      - 安装/更新依赖"
 	@echo "  make fetch        - 获取所有市场数据（所有主板股票）"
 	@echo "  make fetch-quick  - 快速获取（跳过财报和行情）"
@@ -15,6 +16,7 @@ help:
 	@echo "  make setup        - 完整初始化（创建环境 + 配置模板）"
 	@echo "  make clean        - 清理数据目录"
 	@echo "  make lint         - 代码语法检查"
+	@echo "  make process      - 处理数据生成 Qlib 格式"
 	@echo ""
 	@echo "环境变量:"
 	@echo "  TUSHARE_TOKEN     - Tushare API Token（必需）"
@@ -22,7 +24,14 @@ help:
 # 创建 conda 环境
 env:
 	conda env create -f environment.yml || conda env update -f environment.yml
-	@echo "环境创建完成，运行: conda activate quant-data-foundry"
+	@echo "环境创建完成，运行: make activate 查看激活命令"
+
+# 显示激活环境命令
+activate:
+	@echo "请运行以下命令激活环境:"
+	@echo ""
+	@echo "  conda activate quant-data-foundry"
+	@echo ""
 
 # 安装/更新依赖
 install:
@@ -46,7 +55,6 @@ fetch-quick:
 	python scripts/fetch_market_data.py \
 		--skip-qfq-daily \
 		--skip-daily-basic \
-		--skip-adj-factor \
 		--skip-financial
 
 # 演示模式（只获取2只股票的完整数据）
@@ -69,14 +77,12 @@ fetch-base:
 	python scripts/fetch_market_data.py \
 		--skip-qfq-daily \
 		--skip-daily-basic \
-		--skip-adj-factor \
 		--skip-financial
 
 # 只获取行情数据（需要已配置股票代码）
 fetch-quotes:
 	python scripts/fetch_market_data.py \
 		--skip-stock-list \
-		--skip-hsgt \
 		--skip-st \
 		--skip-company \
 		--skip-index-basic \
@@ -103,6 +109,10 @@ lint:
 	@echo "检查 Python 语法..."
 	@python -m py_compile scripts/*.py scripts/fetchers/*.py
 	@echo "语法检查通过"
+
+# 处理数据为 Qlib 格式
+process:
+	python scripts/process_to_qlib.py
 
 # 显示项目信息
 info:
