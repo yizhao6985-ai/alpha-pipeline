@@ -31,6 +31,18 @@ quant-data-foundry/
 │   │   ├── index.py                  # 指数数据
 │   │   ├── market.py                 # 市场数据
 │   │   └── quote.py                  # 行情数据
+│   ├── process_to_qlib.py            # 原始数据 → Qlib bin
+│   ├── dump_bin.py                   # bin 写入（由 process 调用）
+│   └── test_qlib_data.py             # 数据自检
+├── qlib_lab/                  # Qlib 训练与回测（库）
+│   ├── handler/               # DataHandler
+│   ├── dataset/               # DatasetH
+│   ├── model/                 # LightGBM
+│   ├── strategy/              # 策略与 port_config 策略段
+│   ├── backtest/              # port_config 回测段、撮合默认值
+│   ├── training/              # 模型训练
+│   ├── runtime/               # qlib.init、mlruns 路径
+│   └── run_qlib_backtest.py   # 主 CLI
 ├── data/                      # 原始数据输出目录
 ├── Makefile                   # 快捷命令
 ├── environment.yml            # Conda 环境配置
@@ -67,4 +79,4 @@ make fetch
 python scripts/fetch_market_data.py --ts-codes 600000.SH,000001.SZ
 ```
 
-详细说明请参考 `AGENTS.md`。
+更多命令见 `make help` 与各脚本 `--help`。

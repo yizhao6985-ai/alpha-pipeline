@@ -26,6 +26,7 @@ from fetchers import (
     fetch_financial_statements,
     fetch_index_basic,
     fetch_index_weight,
+    fetch_index_daily,
     fetch_trade_calendar,
     fetch_qfq_daily,
     fetch_daily_basic,
@@ -37,8 +38,15 @@ import pandas as pd
 
 # 常量
 DEFAULT_FETCH_START_DATE = "20180101"
-# 默认指数代码：中证全指、中证100、沪深300、中证500、中证1000
-DEFAULT_INDEX_CODES = ["000985.CSI", "000903.SH", "399300.SZ", "000905.SH", "000852.SH"]
+# 默认指数代码：中证全指、中证100、沪深300、中证500、中证1000、中证A500
+DEFAULT_INDEX_CODES = [
+    "000985.CSI",  # 中证全指
+    "000903.SH",  # 中证100
+    "399300.SZ",  # 沪深300
+    "000905.SH",  # 中证500
+    "000852.SH",  # 中证1000
+    "000510.CSI",  # 中证A500
+]
 
 
 def get_default_fetch_end_date() -> str:
@@ -57,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-st", action="store_true", help="跳过 ST 股票列表")
     parser.add_argument("--skip-index-basic", action="store_true", help="跳过指数基础信息")
     parser.add_argument("--skip-index-weight", action="store_true", help="跳过指数成分权重")
+    parser.add_argument("--skip-index-daily", action="store_true", help="跳过指数日线行情")
     parser.add_argument("--skip-calendar", action="store_true", help="跳过交易日历")
     parser.add_argument("--skip-qfq-daily", action="store_true", help="跳过日线行情")
     parser.add_argument("--skip-daily-basic", action="store_true", help="跳过每日指标")
@@ -72,7 +81,6 @@ def main():
 
     # 验证环境
     try:
-        import tushare  # noqa: F401
         get_tushare_pro()
     except ModuleNotFoundError:
         raise SystemExit("未检测到 tushare，请先安装: pip install tushare")
@@ -110,6 +118,9 @@ def main():
 
         if not args.skip_index_weight:
             fetch_index_weight(output_dir, end_date, index_codes)
+        
+        if not args.skip_index_daily:
+            fetch_index_daily(output_dir, end_date, index_codes, start_date, end_date)
 
         if not args.skip_calendar:
             fetch_trade_calendar(output_dir, end_date, start_date)

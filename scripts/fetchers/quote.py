@@ -5,13 +5,18 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-from tqdm import tqdm
-
-from .base import get_tushare_pro, get_required_env, save_csv, file_exists_and_not_empty
+from .base import (
+    get_tushare_pro,
+    get_required_env,
+    retry_if_triplet_api_error,
+    run_parallel_with_rate_limit_retries,
+    save_csv,
+    file_exists_and_not_empty,
+    triplet_indicates_success,
+)
 
 # Tushare API 限流控制
 _MIN_API_INTERVAL = 0.05  # 最小请求间隔（秒），约 20 QPS
@@ -59,7 +64,7 @@ def _fetch_single_qfq_daily(
     end_date: str,
     token: str,
 ) -> tuple[str, bool, int]:
-    """获取单只股票的日线行情"""
+    """获取单只股票的日线行情（前复权；不附带 adj_factor 列，训练/落盘均不需要）。"""
     import tushare as ts
 
     path = output_dir / today_ymd / "quote" / "qfq" / f"{ts_code.replace('.', '_')}.csv"
@@ -74,7 +79,7 @@ def _fetch_single_qfq_daily(
             asset="E",
             adj="qfq",
             freq="D",
-            adjfactor=True,
+            adjfactor=False,
         )
         if df is None or df.empty:
             return ts_code, False, 0  # 无数据
@@ -113,23 +118,20 @@ def fetch_qfq_daily(
 
     print(f"日线行情: 共 {len(ts_codes)} 只，{len(existing)} 只已存在，需下载 {len(to_download)} 只")
 
-    with tqdm(total=len(ts_codes), desc="日线行情", initial=len(existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_qfq_daily,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    start_date,
-                    end_date,
-                    token,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_qfq_daily(
+            code, output_dir, today_ymd, start_date, end_date, token
+        )
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "日线行情",
+        "只",
+    )
 
 
 def _fetch_single_daily_basic(
@@ -185,23 +187,20 @@ def fetch_daily_basic(
 
     print(f"每日指标: 共 {len(ts_codes)} 只，{len(existing)} 只已存在，需下载 {len(to_download)} 只")
 
-    with tqdm(total=len(ts_codes), desc="每日指标", initial=len(existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_daily_basic,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    start_date,
-                    end_date,
-                    pro,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_daily_basic(
+            code, output_dir, today_ymd, start_date, end_date, pro
+        )
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "每日指标",
+        "只",
+    )
 
 
 def _fetch_single_cyq_perf(
@@ -275,109 +274,21 @@ def fetch_cyq_perf(
 
     print(f"筹码胜率: 共 {len(ts_codes)} 只，{len(existing)} 只已存在，需下载 {len(to_download)} 只")
 
-    failed_codes = []
-    success_count = 0
-    
-    with tqdm(total=len(to_download), desc="筹码胜率") as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_cyq_perf,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    start_date,
-                    end_date,
-                    pro,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                ts_code, success, count = future.result()
-                if success:
-                    success_count += 1
-                else:
-                    failed_codes.append(ts_code)
-                pbar.update(1)
-                pbar.set_postfix({"成功": success_count, "失败": len(failed_codes)})
-    
-    print(f"筹码胜率下载完成: 成功 {success_count} 只，失败 {len(failed_codes)} 只")
-    return failed_codes
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_cyq_perf(
+            code, output_dir, today_ymd, start_date, end_date, pro
+        )
 
-
-def _fetch_single_adj_factor(
-    ts_code: str,
-    output_dir: Path,
-    today_ymd: str,
-    start_date: str,
-    end_date: str,
-    pro,
-) -> tuple[str, bool, int]:
-    """获取单只股票的复权因子"""
-    path = (
-        output_dir
-        / today_ymd
-        / "quote"
-        / "adj_factor"
-        / f"{ts_code.replace('.', '_')}.csv"
+    failed_codes = run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "筹码胜率",
+        "只",
     )
 
-    try:
-        df = _rate_limited_api_call(
-            pro.adj_factor,
-            ts_code=ts_code,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        if df is None or df.empty:
-            return ts_code, False, 0
-        save_csv(df, path)
-        return ts_code, True, len(df)
-    except Exception:
-        return ts_code, False, -1
-
-
-def fetch_adj_factor(
-    output_dir: Path,
-    today_ymd: str,
-    ts_codes: list[str],
-    start_date: str,
-    end_date: str,
-    max_workers: int = 8,
-) -> None:
-    """获取复权因子（并发）"""
-    if not ts_codes:
-        return
-
-    pro = get_tushare_pro()
-
-    target_dir = output_dir / today_ymd / "quote" / "adj_factor"
-    existing_codes = _get_existing_codes_from_dir(target_dir)
-    
-    ts_codes_set = set(ts_codes)
-    existing = ts_codes_set & existing_codes
-    to_download = list(ts_codes_set - existing_codes)
-
-    if not to_download:
-        print(f"复权因子: 全部 {len(ts_codes)} 只股票已存在，跳过")
-        return
-
-    print(f"复权因子: 共 {len(ts_codes)} 只，{len(existing)} 只已存在，需下载 {len(to_download)} 只")
-
-    with tqdm(total=len(ts_codes), desc="复权因子", initial=len(existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_adj_factor,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    start_date,
-                    end_date,
-                    pro,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    success_count = len(to_download) - len(failed_codes)
+    print(f"筹码胜率下载完成: 成功 {success_count} 只，失败 {len(failed_codes)} 只")
+    return failed_codes

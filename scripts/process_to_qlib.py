@@ -4,22 +4,22 @@
 
 功能：
 1. 排除 ST 股票
-2. 合并行情、指标、筹码分布数据
-3. 生成 Qlib 标准格式目录结构（bin 格式）
+2. 合并行情 + 筹码 + **Tushare daily_basic**（`quote/basic/*.csv`：PE/PB/换手/市值等）
+3. 通过 `scripts/dump_bin.py` 生成 `features/*.day.bin` 等标准目录
 
-Qlib 目录结构：
+筹码表保留字段 ``weight_avg``（非 VWAP）。``vwap_approx = (high+low+close)/3`` 为典型价近似；
+另写入 ``vwap``（与 ``vwap_approx`` 相同数值）供 Qlib Alpha158 的 ``$vwap`` 表达式使用。
+输出宽表不包含 ``pre_close``（昨收可用 ``Ref($close, 1)``）。
+
+`calendars/day.txt` 使用 `dump_bin.write_calendars`；`instruments/*.txt` 均使用
+`DumpDataBase.save_instruments`（含 `all.txt`、`index_all.txt`、各 `csi*.txt`）。
+
+Qlib 目录结构（节选）：
     qlib_data/
-    ├── calendars/
-    │   └── day.txt          # 交易日历 (YYYY-MM-DD)
-    ├── instruments/
-    │   ├── all.txt          # 全部股票
-    │   ├── csi300.txt       # 沪深300成分股
-    │   ├── csi500.txt       # 中证500成分股
-    │   └── csi1000.txt      # 中证1000成分股
-    └── features/
-        └── sh600000/         # 每只股票一个目录
-            └── close.bin     # 每个字段一个 bin 文件
-            └── close.meta    # 对应的 meta 文件
+    ├── calendars/day.txt
+    ├── instruments/…
+    ├── features/sh600000/*.day.bin
+    └── csv_raw/…              # 处理过程中的宽表 CSV
 
 用法:
     python scripts/process_to_qlib.py
@@ -30,11 +30,11 @@ Qlib 目录结构：
 from __future__ import annotations
 
 import argparse
-import struct
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -43,7 +43,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from fetchers.base import ensure_dir
+from dump_bin import DumpDataAll, make_process_bin_writer, write_calendars
 
 
 # 指数代码映射
@@ -53,45 +53,27 @@ INDEX_CODES = {
     "csi100": "000903.SH",    # 中证100
     "csi1000": "000852.SH",   # 中证1000
     "csi_all": "000985.CSI",  # 中证全指
+    "csi_a500": "000510.CSI",  # 中证A500
 }
 
-# Qlib bin 格式字段映射
-QLIB_FIELD_NAMES = {
-    "open": "$open",
-    "high": "$high",
-    "low": "$low",
-    "close": "$close",
-    "volume": "$volume",
-    "money": "$money",
-    "pre_close": "$pre_close",
-    "change": "$change",
-    "pct_chg": "$pct_chg",
-    "adj_factor": "$adj_factor",
-    "turnover_rate": "$turnover_rate",
-    "turnover_rate_f": "$turnover_rate_f",
-    "volume_ratio": "$volume_ratio",
-    "pe": "$pe",
-    "pe_ttm": "$pe_ttm",
-    "pb": "$pb",
-    "ps": "$ps",
-    "ps_ttm": "$ps_ttm",
-    "dv_ratio": "$dv_ratio",
-    "dv_ttm": "$dv_ttm",
-    "total_share": "$total_share",
-    "float_share": "$float_share",
-    "free_share": "$free_share",
-    "total_mv": "$total_mv",
-    "circ_mv": "$circ_mv",
-    "his_low": "$his_low",
-    "his_high": "$his_high",
-    "cost_5pct": "$cost_5pct",
-    "cost_15pct": "$cost_15pct",
-    "cost_50pct": "$cost_50pct",
-    "cost_85pct": "$cost_85pct",
-    "cost_95pct": "$cost_95pct",
-    "weight_avg": "$weight_avg",
-    "winner_rate": "$winner_rate",
+# 股票列名 → Qlib 特征名（与 Alpha 数据集等惯例一致：成交额为 money）
+STOCK_BIN_RENAMES: dict[str, str] = {
+    "amount": "money",
 }
+
+# daily_basic 并入宽表 / bin 的字段（与 Tushare 列名一致，供 Qlib 表达式 $pe、$pb 等）
+DAILY_BASIC_COLS: tuple[str, ...] = (
+    "pe",
+    "pe_ttm",
+    "pb",
+    "ps",
+    "ps_ttm",
+    "turnover_rate",
+    "volume_ratio",
+    "circ_mv",
+    "total_mv",
+    "dv_ratio",
+)
 
 
 def find_latest_data_dir(data_root: Path) -> str:
@@ -136,6 +118,7 @@ def load_index_components(data_dir: Path, date_str: str) -> dict[str, set[str]]:
         "csi100": "000903_SH.csv",
         "csi1000": "000852_SH.csv",
         "csi_all": "000985_CSI.csv",
+        "csi_a500": "000510_CSI.csv",
     }
     
     for index_name, filename in index_file_map.items():
@@ -160,20 +143,28 @@ def get_qfq_files(data_dir: Path, date_str: str) -> list[Path]:
     return list(qfq_dir.glob("*.csv"))
 
 
-def get_daily_basic_files(data_dir: Path, date_str: str) -> list[Path]:
-    """获取所有每日指标文件列表"""
-    db_dir = data_dir / date_str / "quote" / "basic"
-    if not db_dir.exists():
-        return []
-    return list(db_dir.glob("*.csv"))
-
-
 def get_cyq_files(data_dir: Path, date_str: str) -> list[Path]:
     """获取所有筹码分布文件列表"""
     cyq_dir = data_dir / date_str / "quote" / "cyq"
     if not cyq_dir.exists():
         return []
     return list(cyq_dir.glob("*.csv"))
+
+
+def get_basic_files(data_dir: Path, date_str: str) -> list[Path]:
+    """获取 daily_basic 每日指标文件列表（与 fetch_daily_basic 落盘路径一致）。"""
+    basic_dir = data_dir / date_str / "quote" / "basic"
+    if not basic_dir.exists():
+        return []
+    return list(basic_dir.glob("*.csv"))
+
+
+def get_index_daily_files(data_dir: Path, date_str: str) -> list[Path]:
+    """获取所有指数日线文件列表"""
+    index_dir = data_dir / date_str / "index" / "index_daily"
+    if not index_dir.exists():
+        return []
+    return list(index_dir.glob("*.csv"))
 
 
 def extract_ts_code_from_filename(filename: str) -> str | None:
@@ -219,13 +210,37 @@ def date_to_qlib_int(date_str: str) -> int:
     return int(date_str.replace("-", ""))
 
 
+def _merge_daily_basic(qfq_df: pd.DataFrame, basic_file: Path | None) -> pd.DataFrame:
+    """按交易日左连接 daily_basic；无文件或失败则原样返回。"""
+    if basic_file is None or not basic_file.exists():
+        return qfq_df
+    try:
+        b = pd.read_csv(basic_file, encoding="utf-8")
+        if b.empty or "trade_date" not in b.columns:
+            return qfq_df
+        b = b.rename(columns={"trade_date": "date"})
+        b["date"] = b["date"].apply(format_date)
+        if "ts_code" in b.columns:
+            b = b.drop(columns=["ts_code"])
+        take = [c for c in DAILY_BASIC_COLS if c in b.columns]
+        if not take:
+            return qfq_df
+        b = b[["date"] + take].copy()
+        for c in take:
+            b[c] = pd.to_numeric(b[c], errors="coerce")
+        b = b.drop_duplicates(subset=["date"], keep="last").sort_values("date")
+        return qfq_df.merge(b, on="date", how="left")
+    except Exception:
+        return qfq_df
+
+
 def process_stock_data(
     qfq_file: Path,
-    daily_basic_file: Path | None,
     cyq_file: Path | None,
-    st_codes: set[str],
+    st_codes: set[str] | frozenset[str],
+    basic_file: Path | None = None,
 ) -> pd.DataFrame | None:
-    """处理单只股票数据，合并行情、指标和筹码分布"""
+    """处理单只股票：前复权行情 + 筹码 + daily_basic（可选）。"""
     ts_code = extract_ts_code_from_filename(qfq_file.name)
     if not ts_code:
         return None
@@ -247,36 +262,21 @@ def process_stock_data(
         qfq_df = qfq_df.rename(columns={
             "trade_date": "date",
             "vol": "volume",
-            "amount": "money",
+            "amount": "amount",
         })
         qfq_df["date"] = qfq_df["date"].apply(format_date)
+
+        # 前复权行情不需要复权因子列；旧 CSV 若含则去掉，避免写入 bin/features
+        for _drop in ("adj_factor",):
+            if _drop in qfq_df.columns:
+                qfq_df = qfq_df.drop(columns=[_drop])
         
         # 确保必要的列存在
-        required_cols = ["date", "open", "high", "low", "close", "volume", "money"]
+        required_cols = ["date", "open", "high", "low", "close", "volume", "amount"]
         for col in required_cols:
             if col not in qfq_df.columns:
                 return None
-        
-        # 合并每日指标数据
-        if daily_basic_file and daily_basic_file.exists():
-            try:
-                db_df = pd.read_csv(daily_basic_file, encoding="utf-8")
-                if not db_df.empty:
-                    db_df = db_df.rename(columns={"trade_date": "date"})
-                    db_df["date"] = db_df["date"].apply(format_date)
-                    if "ts_code" in db_df.columns:
-                        db_df = db_df.drop(columns=["ts_code"])
-                    indicator_cols = ["date", "turnover_rate", "turnover_rate_f", 
-                                     "volume_ratio", "pe", "pe_ttm", "pb", "ps", 
-                                     "ps_ttm", "dv_ratio", "dv_ttm", "total_share",
-                                     "float_share", "free_share", "total_mv", "circ_mv"]
-                    available_cols = [c for c in indicator_cols if c in db_df.columns]
-                    if available_cols:
-                        db_df = db_df[available_cols]
-                        qfq_df = qfq_df.merge(db_df, on="date", how="left")
-            except Exception:
-                pass
-        
+
         # 合并筹码分布数据
         if cyq_file and cyq_file.exists():
             try:
@@ -294,17 +294,144 @@ def process_stock_data(
                         qfq_df = qfq_df.merge(cyq_df, on="date", how="left")
             except Exception:
                 pass
-        
+
+        qfq_df = _merge_daily_basic(qfq_df, basic_file)
+
+        # 与 Qlib 日历 /特征一致：日期升序（旧 → 新），Tushare 原始 CSV 多为降序
+        qfq_df = qfq_df.sort_values("date", ascending=True).reset_index(drop=True)
+        # 昨收可由 Ref($close, 1) 得到，不落盘
+        if "pre_close" in qfq_df.columns:
+            qfq_df = qfq_df.drop(columns=["pre_close"])
+
+        qfq_df = _add_vwap_typical_price(qfq_df)
+
         return qfq_df
-    
+
     except Exception:
         return None
+
+
+def process_index_data(index_daily_file: Path) -> pd.DataFrame | None:
+    """处理单个指数的日线行情数据
+    
+    index_daily 返回字段：
+    - ts_code: 指数代码
+    - trade_date: 交易日期
+    - close: 收盘点位
+    - open: 开盘点位
+    - high: 最高点位
+    - low: 最低点位
+    - change: 涨跌点
+    - pct_chg: 涨跌幅(%)
+    - vol: 成交量（手）
+    - amount: 成交额（千元）
+    """
+    if not index_daily_file.exists():
+        return None
+    
+    try:
+        df = pd.read_csv(index_daily_file, encoding="utf-8")
+        if df.empty:
+            return None
+        
+        # 删除 ts_code 列（从文件名获取）
+        if "ts_code" in df.columns:
+            df = df.drop(columns=["ts_code"])
+        
+        # 标准化列名
+        df = df.rename(columns={
+            "trade_date": "date",
+            "vol": "volume",
+            "amount": "amount",
+        })
+        df["date"] = df["date"].apply(format_date)
+
+        df = df.sort_values("date", ascending=True).reset_index(drop=True)
+        if "pre_close" in df.columns:
+            df = df.drop(columns=["pre_close"])
+
+        df = _add_vwap_typical_price(df)
+
+        return df
+
+    except Exception:
+        return None
+
+
+def _add_vwap_typical_price(df: pd.DataFrame) -> pd.DataFrame:
+    """典型价近似 VWAP：``(high+low+close)/3``；``vwap`` 与 ``vwap_approx`` 同值供 ``$vwap`` 使用。"""
+    if not all(c in df.columns for c in ("high", "low", "close")):
+        return df
+    out = df.copy()
+    h = pd.to_numeric(out["high"], errors="coerce")
+    l = pd.to_numeric(out["low"], errors="coerce")
+    c = pd.to_numeric(out["close"], errors="coerce")
+    out["vwap_approx"] = (h + l + c) / 3.0
+    out["vwap"] = out["vwap_approx"]
+    return out
+
+
+def _process_one_stock_worker(
+    qfq_file: str,
+    cyq_file: str | None,
+    basic_file: str | None,
+    st_codes: frozenset[str],
+) -> tuple[str, pd.DataFrame] | None:
+    """并行任务：处理单只股票，返回 (qlib_symbol, DataFrame)。"""
+    qfq_path = Path(qfq_file)
+    ts_code = extract_ts_code_from_filename(qfq_path.name)
+    if not ts_code or ts_code in st_codes:
+        return None
+    df = process_stock_data(
+        qfq_path,
+        Path(cyq_file) if cyq_file else None,
+        st_codes,
+        Path(basic_file) if basic_file else None,
+    )
+    if df is None or df.empty:
+        return None
+    return (to_qlib_symbol(ts_code), df)
+
+
+def _process_one_index_worker(index_daily_file: str) -> tuple[str, pd.DataFrame] | None:
+    """并行任务：处理单个指数 CSV。"""
+    path = Path(index_daily_file)
+    ts_code = extract_ts_code_from_filename(path.name)
+    if not ts_code:
+        return None
+    df = process_index_data(path)
+    if df is None or df.empty:
+        return None
+    return (to_qlib_symbol(ts_code), df)
+
+
+def _save_one_csv(
+    qlib_symbol: str,
+    df: pd.DataFrame,
+    csv_dir: Path,
+    calendars_list: list[str] | None = None,
+    csv_full_calendar: bool = True,
+) -> None:
+    """写入单个 csv_raw。默认与 ``day.txt`` 同一区间：从全局日历首日至末日 reindex，上市前/无行情日为 NaN。"""
+    sub = csv_dir / to_feature_dir_name(qlib_symbol)
+    sub.mkdir(parents=True, exist_ok=True)
+    to_write = (
+        _align_df_to_calendar(df, calendars_list, full_calendar=csv_full_calendar)
+        if calendars_list
+        else df
+    )
+    to_write.to_csv(sub / "data.csv", index=False, encoding="utf-8")
+
+
+def default_worker_count() -> int:
+    return max(1, min(32, os.cpu_count() or 8))
 
 
 def process_all_data(
     data_dir: Path,
     date_str: str,
     st_codes: set[str],
+    max_workers: int | None = None,
 ) -> dict[str, pd.DataFrame]:
     """处理所有股票数据，返回以 qlib_symbol 为 key 的字典"""
     qfq_files = get_qfq_files(data_dir, date_str)
@@ -313,16 +440,7 @@ def process_all_data(
         raise ValueError(f"未找到行情数据: {data_dir / date_str / 'quote' / 'qfq'}")
     
     print(f"找到 {len(qfq_files)} 只股票数据，正在处理...")
-    
-    # 构建文件映射
-    db_dir = data_dir / date_str / "quote" / "basic"
-    db_file_map = {}
-    if db_dir.exists():
-        for f in db_dir.glob("*.csv"):
-            ts_code = extract_ts_code_from_filename(f.name)
-            if ts_code:
-                db_file_map[ts_code] = f
-    
+
     cyq_dir = data_dir / date_str / "quote" / "cyq"
     cyq_file_map = {}
     if cyq_dir.exists():
@@ -330,31 +448,59 @@ def process_all_data(
             ts_code = extract_ts_code_from_filename(f.name)
             if ts_code:
                 cyq_file_map[ts_code] = f
-    
-    print(f"  - 每日指标数据: {len(db_file_map)} 只")
+
+    basic_dir = data_dir / date_str / "quote" / "basic"
+    basic_file_map: dict[str, Path] = {}
+    if basic_dir.exists():
+        for f in basic_dir.glob("*.csv"):
+            ts_code = extract_ts_code_from_filename(f.name)
+            if ts_code:
+                basic_file_map[ts_code] = f
+
     print(f"  - 筹码分布数据: {len(cyq_file_map)} 只")
+    print(f"  - daily_basic 基本面: {len(basic_file_map)} 只")
     
-    # 处理每只股票
-    stock_data = {}
-    skipped_st = 0
-    
-    for qfq_file in tqdm(qfq_files, desc="处理股票"):
+    skipped_st = sum(
+        1
+        for f in qfq_files
+        if (c := extract_ts_code_from_filename(f.name)) is not None and c in st_codes
+    )
+
+    workers = default_worker_count() if max_workers is None else max(1, max_workers)
+    frozen_st = frozenset(st_codes)
+    stock_data: dict[str, pd.DataFrame] = {}
+
+    tasks: list[tuple[str, str | None, str | None, frozenset[str]]] = []
+    for qfq_file in qfq_files:
         ts_code = extract_ts_code_from_filename(qfq_file.name)
-        if not ts_code:
+        if not ts_code or ts_code in st_codes:
             continue
-        
-        if ts_code in st_codes:
-            skipped_st += 1
-            continue
-        
-        db_file = db_file_map.get(ts_code)
-        cyq_file = cyq_file_map.get(ts_code)
-        df = process_stock_data(qfq_file, db_file, cyq_file, st_codes)
-        
-        if df is not None and not df.empty:
-            qlib_symbol = to_qlib_symbol(ts_code)
-            stock_data[qlib_symbol] = df
-    
+        cyq_f = cyq_file_map.get(ts_code)
+        basic_f = basic_file_map.get(ts_code)
+        tasks.append(
+            (
+                str(qfq_file.resolve()),
+                str(cyq_f.resolve()) if cyq_f else None,
+                str(basic_f.resolve()) if basic_f else None,
+                frozen_st,
+            )
+        )
+
+    if workers <= 1:
+        for t in tqdm(tasks, desc="处理股票"):
+            r = _process_one_stock_worker(*t)
+            if r:
+                sym, df = r
+                stock_data[sym] = df
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(_process_one_stock_worker, *t) for t in tasks]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="处理股票"):
+                r = fut.result()
+                if r:
+                    sym, df = r
+                    stock_data[sym] = df
+
     if skipped_st > 0:
         print(f"已排除 {skipped_st} 只 ST 股票")
     
@@ -364,162 +510,254 @@ def process_all_data(
     return stock_data
 
 
-def save_csv_raw(stock_data: dict[str, pd.DataFrame], output_dir: Path) -> None:
-    """保存每只股票的 CSV 到 csv_raw 目录（中间数据）"""
+def load_all_index_data(
+    data_dir: Path, date_str: str, max_workers: int | None = None
+) -> dict[str, pd.DataFrame]:
+    """加载所有指数行情数据"""
+    index_files = get_index_daily_files(data_dir, date_str)
+    if not index_files:
+        return {}
+
+    workers = default_worker_count() if max_workers is None else max(1, max_workers)
+    index_data: dict[str, pd.DataFrame] = {}
+    paths = [str(p.resolve()) for p in index_files]
+
+    if workers <= 1 or len(paths) <= 1:
+        for p in tqdm(paths, desc="加载指数数据"):
+            r = _process_one_index_worker(p)
+            if r:
+                sym, df = r
+                index_data[sym] = df
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(paths))) as ex:
+            futures = [ex.submit(_process_one_index_worker, p) for p in paths]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="加载指数数据"):
+                r = fut.result()
+                if r:
+                    sym, df = r
+                    index_data[sym] = df
+
+    return index_data
+
+
+def save_csv_raw(
+    stock_data: dict[str, pd.DataFrame],
+    index_data: dict[str, pd.DataFrame],
+    output_dir: Path,
+    max_workers: int | None = None,
+    calendars_list: list[str] | None = None,
+    *,
+    csv_full_calendar: bool = True,
+) -> None:
+    """保存 csv_raw。默认全日历对齐（与 ``day.txt`` 起止一致）；``csv_full_calendar=False`` 时仅标的首末日窗口。"""
     csv_dir = output_dir / "csv_raw"
     csv_dir.mkdir(parents=True, exist_ok=True)
-    
-    for qlib_symbol, df in tqdm(stock_data.items(), desc="保存 CSV"):
-        # 创建股票目录 (使用小写的 qlib_symbol，如 sh600000)
-        stock_dir = csv_dir / to_feature_dir_name(qlib_symbol)
-        stock_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 保存 CSV
-        csv_path = stock_dir / "data.csv"
-        df.to_csv(csv_path, index=False, encoding="utf-8")
-    
-    print(f"已保存 {len(stock_data)} 只股票的 CSV 文件到: {csv_dir}")
+
+    workers = default_worker_count() if max_workers is None else max(1, max_workers)
+    stock_items = list(stock_data.items())
+    index_items = list(index_data.items())
+    all_jobs: list[tuple[str, pd.DataFrame]] = stock_items + index_items
+
+    if workers <= 1 or not all_jobs:
+        for qlib_symbol, df in tqdm(all_jobs, desc="保存 CSV"):
+            _save_one_csv(qlib_symbol, df, csv_dir, calendars_list, csv_full_calendar)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(all_jobs))) as ex:
+            futures = [
+                ex.submit(
+                    _save_one_csv,
+                    sym,
+                    df,
+                    csv_dir,
+                    calendars_list,
+                    csv_full_calendar,
+                )
+                for sym, df in all_jobs
+            ]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="保存 CSV"):
+                fut.result()
+
+    print(f"已保存 {len(stock_data)} 只股票和 {len(index_data)} 个指数的 CSV 文件到: {csv_dir}")
 
 
-def convert_to_bin(stock_data: dict[str, pd.DataFrame], output_dir: Path) -> None:
-    """将数据转换为 Qlib bin 格式并保存到 features 目录
-    
-    官方 Qlib 格式: {field}.day.bin (如 close.day.bin, open.day.bin)
+def _data_merge_calendar(
+    df: pd.DataFrame,
+    date_field: str,
+    calendar_timestamps: list[pd.Timestamp],
+) -> pd.DataFrame:
+    """与 Qlib scripts/dump_bin.DumpDataBase.data_merge_calendar 一致：仅在标的日期范围内截取日历后 reindex。"""
+    if df.empty or date_field not in df.columns:
+        return pd.DataFrame()
+    dmin = df[date_field].min()
+    dmax = df[date_field].max()
+    cal_index = pd.DatetimeIndex([t for t in calendar_timestamps if dmin <= t <= dmax])
+    if len(cal_index) == 0:
+        return pd.DataFrame()
+    return df.set_index(date_field).reindex(cal_index)
+
+
+def _align_df_to_calendar(
+    df: pd.DataFrame,
+    calendars_list: list[str] | None,
+    date_field: str = "date",
+    *,
+    full_calendar: bool = True,
+) -> pd.DataFrame:
+    """按交易日历补全 CSV 行序。
+
+    - full_calendar=True（默认）：从 calendars_list首日至末日，每交易日一行，与 day.txt 等长；
+      标的尚无行情日为 NaN（如上市前）。
+    - full_calendar=False：仅在 [标的首条数据日, 末条数据日] 窗口内补行（与转 bin 的 _data_merge_calendar 一致）。
     """
-    features_dir = output_dir / "features"
-    features_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 字段名映射到官方 Qlib 格式（去掉 $ 前缀）
-    field_name_map = {
-        "open": "open",
-        "high": "high",
-        "low": "low",
-        "close": "close",
-        "volume": "volume",
-        "money": "money",
-        "pre_close": "pre_close",
-        "change": "change",
-        "pct_chg": "pct_chg",
-        "adj_factor": "factor",  # 官方使用 factor 而不是 adj_factor
-        "turnover_rate": "turnover_rate",
-        "turnover_rate_f": "turnover_rate_f",
-        "volume_ratio": "volume_ratio",
-        "pe": "pe",
-        "pe_ttm": "pe_ttm",
-        "pb": "pb",
-        "ps": "ps",
-        "ps_ttm": "ps_ttm",
-        "dv_ratio": "dv_ratio",
-        "dv_ttm": "dv_ttm",
-        "total_share": "total_share",
-        "float_share": "float_share",
-        "free_share": "free_share",
-        "total_mv": "total_mv",
-        "circ_mv": "circ_mv",
-        "his_low": "his_low",
-        "his_high": "his_high",
-        "cost_5pct": "cost_5pct",
-        "cost_15pct": "cost_15pct",
-        "cost_50pct": "cost_50pct",
-        "cost_85pct": "cost_85pct",
-        "cost_95pct": "cost_95pct",
-        "weight_avg": "weight_avg",
-        "winner_rate": "winner_rate",
-    }
-    
-    # 按股票转换
-    for qlib_symbol, df in tqdm(stock_data.items(), desc="转换为 bin"):
-        # 创建股票目录
-        stock_dir = features_dir / to_feature_dir_name(qlib_symbol)
-        stock_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 将日期转换为整数
-        df = df.copy()
-        df["date_int"] = df["date"].apply(date_to_qlib_int)
-        df = df.sort_values("date_int")
-        
-        # 为每个字段创建 bin 文件
-        for field in df.columns:
-            if field in ("date", "date_int"):
-                continue
-            
-            # 使用官方格式的字段名
-            qlib_field = field_name_map.get(field, field)
-            bin_path = stock_dir / f"{qlib_field}.day.bin"
-            
-            # 获取有效数据（非 NaN）
-            valid_data = df[["date_int", field]].dropna()
-            if valid_data.empty:
-                continue
-            
-            dates = valid_data["date_int"].values.astype(np.int64)
-            values = valid_data[field].values.astype(np.float32)
-            
-            # 写入 bin 文件
-            # Qlib bin 格式: [date1, value1, date2, value2, ...]
-            data_array = np.column_stack([dates, values]).flatten()
-            data_array.astype(np.float32).tofile(bin_path)
-    
-    print(f"已转换 {len(stock_data)} 只股票的 bin 文件到: {features_dir}")
+    if not calendars_list or df.empty or date_field not in df.columns:
+        return df
+    calendar_ts = [pd.Timestamp(d) for d in calendars_list]
+    work = df.copy()
+    work[date_field] = pd.to_datetime(work[date_field])
+    work = work.sort_values(date_field, ascending=True)
+    work = work.drop_duplicates(subset=[date_field], keep="first")
+
+    if full_calendar:
+        cal_index = pd.DatetimeIndex(calendar_ts)
+        merged = work.set_index(date_field).reindex(cal_index)
+    else:
+        merged = _data_merge_calendar(work, date_field, calendar_ts)
+
+    if merged.empty:
+        return df
+    out = merged.reset_index()
+    if date_field not in out.columns:
+        out = out.rename(columns={out.columns[0]: date_field})
+    out[date_field] = pd.to_datetime(out[date_field]).dt.strftime("%Y-%m-%d")
+    return out
+
+
+def _prep_dataframe_for_qlib_dump(
+    df: pd.DataFrame,
+    qlib_symbol: str,
+    column_renames: dict[str, str] | None,
+) -> pd.DataFrame:
+    """构造含 `symbol`、`date` 列的 DataFrame，供 `DumpDataBase._dump_bin` 使用。"""
+
+    prep = df.copy()
+    if column_renames:
+        ren = {k: v for k, v in column_renames.items() if k in prep.columns and k != v}
+        if ren:
+            prep = prep.rename(columns=ren)
+    prep["symbol"] = qlib_symbol
+    prep["date"] = pd.to_datetime(prep["date"])
+    return prep
+
+
+def convert_to_bin(
+    stock_data: dict[str, pd.DataFrame],
+    index_data: dict[str, pd.DataFrame],
+    calendars_list: list[str],
+    output_dir: Path,
+    writer: DumpDataAll,
+    max_workers: int | None = None,
+) -> None:
+    """将股票和指数数据转换为 Qlib bin（委托 `scripts/dump_bin.DumpDataBase._dump_bin`）。"""
+
+    calendar_ts = [pd.Timestamp(d) for d in calendars_list]
+    workers = default_worker_count() if max_workers is None else max(1, max_workers)
+
+    jobs: list[pd.DataFrame] = [
+        _prep_dataframe_for_qlib_dump(df, sym, STOCK_BIN_RENAMES) for sym, df in stock_data.items()
+    ] + [_prep_dataframe_for_qlib_dump(df, sym, None) for sym, df in index_data.items()]
+
+    if workers <= 1 or not jobs:
+        for prep in tqdm(jobs, desc="转换 bin"):
+            writer._dump_bin(prep, calendar_ts)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(jobs))) as ex:
+            futures = [ex.submit(writer._dump_bin, prep, calendar_ts) for prep in jobs]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="转换 bin"):
+                fut.result()
+
+    print(f"已转换 {len(stock_data)} 只股票和 {len(index_data)} 个指数的 bin 文件到: {output_dir / 'features'}")
 
 
 def save_instruments(
     stock_data: dict[str, pd.DataFrame],
-    output_dir: Path,
+    index_data: dict[str, pd.DataFrame],
     index_components: dict[str, set[str]],
+    writer: DumpDataAll,
 ) -> None:
-    """保存 instruments 文件"""
-    instruments_dir = output_dir / "instruments"
-    instruments_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 准备所有股票的数据范围
-    stock_ranges = {}
+    """保存 instruments：全部走 `dump_bin.DumpDataBase.save_instruments`（与官方一致的 TSV + 符号规范化）。"""
+
+    sym_col = writer.symbol_field_name
+    start_f = writer.INSTRUMENTS_START_FIELD
+    end_f = writer.INSTRUMENTS_END_FIELD
+    instruments_dir = writer._instruments_dir
+
+    stock_ranges: dict[str, tuple[str, str]] = {}
     for qlib_symbol, df in stock_data.items():
         dates = sorted(df["date"].tolist())
         stock_ranges[qlib_symbol] = (dates[0], dates[-1])
-    
-    # 保存 all.txt
-    all_path = instruments_dir / "all.txt"
-    with open(all_path, "w", encoding="utf-8") as f:
-        for symbol in sorted(stock_ranges.keys()):
-            start, end = stock_ranges[symbol]
-            f.write(f"{symbol}\t{start}\t{end}\n")
-    print(f"已保存: {all_path} ({len(stock_ranges)} 只)")
-    
-    # 保存各指数成分股 instruments
+
+    index_ranges: dict[str, tuple[str, str]] = {}
+    for qlib_symbol, df in index_data.items():
+        dates = sorted(df["date"].tolist())
+        index_ranges[qlib_symbol] = (dates[0], dates[-1])
+
+    inst_rows = []
+    for qlib_symbol, df in stock_data.items():
+        dts = pd.to_datetime(df["date"])
+        inst_rows.append(
+            {
+                sym_col: qlib_symbol,
+                start_f: dts.min().strftime("%Y-%m-%d"),
+                end_f: dts.max().strftime("%Y-%m-%d"),
+            }
+        )
+    inst_df = pd.DataFrame(inst_rows).sort_values(sym_col)
+    writer.save_instruments(inst_df)
+    print(f"已保存: {instruments_dir / writer.INSTRUMENTS_FILE_NAME} ({len(stock_ranges)} 只股票)")
+
+    index_rows = [
+        {sym_col: symbol, start_f: index_ranges[symbol][0], end_f: index_ranges[symbol][1]}
+        for symbol in sorted(index_ranges.keys())
+    ]
+    writer.save_instruments(pd.DataFrame(index_rows), file_name="index_all.txt")
+    print(f"已保存: {instruments_dir / 'index_all.txt'} ({len(index_ranges)} 个指数)")
+
     for index_name, components in index_components.items():
-        index_path = instruments_dir / f"{index_name}.txt"
-        index_stocks = set()
-        
-        with open(index_path, "w", encoding="utf-8") as f:
-            for ts_code in sorted(components):
-                qlib_symbol = to_qlib_symbol(ts_code)
-                if qlib_symbol in stock_ranges:
-                    start, end = stock_ranges[qlib_symbol]
-                    f.write(f"{qlib_symbol}\t{start}\t{end}\n")
-                    index_stocks.add(qlib_symbol)
-        
-        print(f"已保存: {index_path} ({len(index_stocks)} 只)")
+        comp_rows = []
+        for ts_code in sorted(components):
+            qlib_symbol = to_qlib_symbol(ts_code)
+            if qlib_symbol in stock_ranges:
+                start, end = stock_ranges[qlib_symbol]
+                comp_rows.append({sym_col: qlib_symbol, start_f: start, end_f: end})
+        writer.save_instruments(pd.DataFrame(comp_rows).sort_values(sym_col), file_name=f"{index_name}.txt")
+        print(f"已保存: {instruments_dir / f'{index_name}.txt'} ({len(comp_rows)} 只)")
 
 
-def save_calendars(stock_data: dict[str, pd.DataFrame], output_dir: Path) -> None:
-    """保存交易日历"""
-    # 收集所有日期
-    all_dates = set()
+def collect_calendar_dates(
+    stock_data: dict[str, pd.DataFrame],
+    index_data: dict[str, pd.DataFrame] | None = None,
+) -> list[str]:
+    """股票与指数（若有）出现过的交易日并集，升序字符串 YYYY-MM-DD。"""
+
+    all_dates: set[str] = set()
     for df in stock_data.values():
         all_dates.update(df["date"].tolist())
-    
-    dates = sorted(all_dates)
-    
-    calendars_dir = output_dir / "calendars"
-    calendars_dir.mkdir(parents=True, exist_ok=True)
-    
-    calendar_path = calendars_dir / "day.txt"
-    with open(calendar_path, "w", encoding="utf-8") as f:
-        for d in dates:
-            f.write(f"{d}\n")
-    
-    print(f"已保存: {calendar_path} ({len(dates)} 个交易日)")
+    if index_data:
+        for df in index_data.values():
+            all_dates.update(df["date"].tolist())
+    return sorted(all_dates)
+
+
+def save_calendars_with_writer(
+    calendars_as_strings: list[str],
+    writer: DumpDataAll,
+) -> list[str]:
+    """使用 `dump_bin.write_calendars`（与 `DumpDataBase.save_calendars` 相同实现）。"""
+
+    write_calendars(writer.qlib_dir, [pd.Timestamp(d) for d in calendars_as_strings], freq=writer.freq)
+    calendar_path = writer._calendars_dir.joinpath(f"{writer.freq}.txt")
+    print(f"已保存: {calendar_path} ({len(calendars_as_strings)} 个交易日)")
+    return calendars_as_strings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -528,6 +766,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date", type=str, default=None, help="数据日期（如 20260408），默认使用最新日期")
     parser.add_argument("--output-dir", type=str, default="qlib_data", help="输出目录，默认 qlib_data")
     parser.add_argument("--skip-bin", action="store_true", help="跳过 bin 转换，只保存 CSV")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="并行 worker 数（线程池，适用于读 CSV / 写 CSV / 写 bin）；"
+        "默认 min(32, CPU 核数)。设为 1 则全程单线程。",
+    )
+    parser.add_argument(
+        "--csv-window-only",
+        action="store_true",
+        help="csv_raw 仅从标的首条数据日至末日对齐日历（文件更短，首行不是全局起始日）；默认与 day.txt 全日历一致",
+    )
     return parser
 
 
@@ -550,8 +800,13 @@ def main():
     print(f"数据日期: {date_str}")
     print(f"数据来源: {data_dir / date_str}")
     print(f"输出目录: {output_dir}")
+    workers = args.workers if args.workers is not None else default_worker_count()
+    workers = max(1, workers)
+    print(f"并行 workers: {workers}")
     print("=" * 60)
-    
+
+    writer = make_process_bin_writer(output_dir, freq="day", max_workers=workers, exclude_fields="symbol")
+
     # 加载 ST 股票列表
     print("\n正在加载 ST 股票列表...")
     st_codes = load_st_list(data_dir, date_str)
@@ -563,27 +818,46 @@ def main():
     for name, codes in index_components.items():
         print(f"  - {name}: {len(codes)} 只")
     
-    # 处理数据
+    # 处理股票数据
     print("\n正在处理股票数据...")
-    stock_data = process_all_data(data_dir, date_str, st_codes)
+    stock_data = process_all_data(data_dir, date_str, st_codes, max_workers=workers)
     print(f"有效股票数量: {len(stock_data)}")
     
-    # 保存 CSV 原始数据（中间数据）
-    print("\n正在保存 CSV 原始数据...")
-    save_csv_raw(stock_data, output_dir)
+    # 加载指数数据
+    print("\n正在加载指数数据...")
+    index_data = load_all_index_data(data_dir, date_str, max_workers=workers)
+    print(f"有效指数数量: {len(index_data)}")
+    
+    # 先写交易日历，再按该日历对齐 csv_raw（否则 CSV 只有 Tushare 有行情的稀疏日）
+    print("\n正在保存 calendars...")
+    calendars_list = collect_calendar_dates(stock_data, index_data)
+    save_calendars_with_writer(calendars_list, writer)
+
+    print("\n正在保存 CSV 原始数据（按 calendars/day.txt 对齐）...")
+    save_csv_raw(
+        stock_data,
+        index_data,
+        output_dir,
+        max_workers=workers,
+        calendars_list=calendars_list,
+        csv_full_calendar=not args.csv_window_only,
+    )
     
     # 转换为 bin 格式
     if not args.skip_bin:
         print("\n正在转换为 bin 格式...")
-        convert_to_bin(stock_data, output_dir)
-    
+        convert_to_bin(
+            stock_data,
+            index_data,
+            calendars_list,
+            output_dir,
+            writer,
+            max_workers=workers,
+        )
+
     # 保存 instruments
     print("\n正在保存 instruments...")
-    save_instruments(stock_data, output_dir, index_components)
-    
-    # 保存 calendars
-    print("\n正在保存 calendars...")
-    save_calendars(stock_data, output_dir)
+    save_instruments(stock_data, index_data, index_components, writer)
     
     print("\n" + "=" * 60)
     print("数据处理完成")
@@ -594,7 +868,7 @@ def main():
     print(f"  ├── instruments/all.txt")
     print(f"  ├── instruments/csi300.txt")
     print(f"  ├── csv_raw/sh600000/data.csv")
-    print(f"  └── features/sh600000/close.bin")
+    print(f"  └── features/sh600000/*.day.bin")
     print(f"      ...")
 
 

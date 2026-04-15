@@ -5,13 +5,17 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-from tqdm import tqdm
-
-from .base import get_tushare_pro, save_csv, file_exists_and_not_empty
+from .base import (
+    get_tushare_pro,
+    retry_if_triplet_api_error,
+    run_parallel_with_rate_limit_retries,
+    save_csv,
+    file_exists_and_not_empty,
+    triplet_indicates_success,
+)
 
 # Tushare API 限流控制
 _MIN_API_INTERVAL = 0.05  # 最小请求间隔（秒），约 20 QPS
@@ -56,18 +60,18 @@ def _fetch_single_company(
     output_dir: Path,
     today_ymd: str,
     pro,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, int]:
     """获取单只股票的公司基本信息"""
     path = output_dir / today_ymd / "company" / f"{ts_code.replace('.', '_')}.csv"
 
     try:
         df = _rate_limited_api_call(pro.stock_company, ts_code=ts_code)
         if df is None or df.empty:
-            return ts_code, False
+            return ts_code, False, 0
         save_csv(df, path)
-        return ts_code, True
+        return ts_code, True, len(df)
     except Exception:
-        return ts_code, False
+        return ts_code, False, -1
 
 
 def fetch_company_basic_info(
@@ -97,21 +101,18 @@ def fetch_company_basic_info(
 
     print(f"公司基本信息: 共 {len(ts_codes)} 只，{len(existing)} 只已存在，需下载 {len(to_download)} 只")
 
-    with tqdm(total=len(ts_codes), desc="公司信息", initial=len(existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_company,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    pro,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_company(code, output_dir, today_ymd, pro)
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "公司信息",
+        "只",
+    )
 
 
 def _check_all_financial_exist(
@@ -140,9 +141,9 @@ def _fetch_single_financial(
     start_date: str,
     end_date: str,
     pro,
-) -> tuple[str, int]:
-    """获取单只股票的财务报表，返回 (ts_code, 下载文件数)"""
-    count = 0
+) -> tuple[str, bool, bool]:
+    """获取单只股票的财务报表。返回 (ts_code, 三张表是否齐全, 是否发生过接口异常)。"""
+    had_api_error = False
     code_filename = ts_code.replace('.', '_')
 
     # 资产负债表
@@ -157,9 +158,8 @@ def _fetch_single_financial(
             )
             if df is not None and not df.empty:
                 save_csv(df, bs_path)
-                count += 1
         except Exception:
-            pass
+            had_api_error = True
 
     # 利润表
     inc_path = output_dir / today_ymd / "financial" / "income" / f"{code_filename}.csv"
@@ -173,9 +173,8 @@ def _fetch_single_financial(
             )
             if df is not None and not df.empty:
                 save_csv(df, inc_path)
-                count += 1
         except Exception:
-            pass
+            had_api_error = True
 
     # 现金流量表
     cf_path = output_dir / today_ymd / "financial" / "cashflow" / f"{code_filename}.csv"
@@ -189,11 +188,11 @@ def _fetch_single_financial(
             )
             if df is not None and not df.empty:
                 save_csv(df, cf_path)
-                count += 1
         except Exception:
-            pass
+            had_api_error = True
 
-    return ts_code, count
+    complete = _check_all_financial_exist(ts_code, output_dir, today_ymd)
+    return ts_code, complete, had_api_error
 
 
 def fetch_financial_statements(
@@ -225,20 +224,28 @@ def fetch_financial_statements(
 
     print(f"财务报表: 共 {len(ts_codes)} 只，{len(fully_existing)} 只已存在，需处理 {len(to_download)} 只")
 
-    with tqdm(total=len(ts_codes), desc="财务报表", initial=len(fully_existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_financial,
-                    ts_code,
-                    output_dir,
-                    today_ymd,
-                    start_date,
-                    end_date,
-                    pro,
-                ): ts_code
-                for ts_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    def _work(code: str) -> tuple[str, bool, bool]:
+        return _fetch_single_financial(
+            code, output_dir, today_ymd, start_date, end_date, pro
+        )
+
+    def _retry_financial(_item: object, result: object) -> bool:
+        if not isinstance(result, tuple) or len(result) != 3:
+            return False
+        _code, complete, had_err = result
+        return (not complete) and had_err
+
+    def _financial_ok(_item: object, result: object) -> bool:
+        if not isinstance(result, tuple) or len(result) != 3:
+            return False
+        return bool(result[1])
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        _retry_financial,
+        _financial_ok,
+        "财务报表",
+        "只",
+    )

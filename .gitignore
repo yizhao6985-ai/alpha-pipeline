@@ -22,3 +22,5 @@ env/
 data/
 qlib_data/
 processed_data/
+qlib_runs/
+mlruns/

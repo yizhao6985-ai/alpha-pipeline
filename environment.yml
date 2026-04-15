@@ -3,10 +3,18 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python>=3.12
+  - python=3.12
   - pip
+  - numpy
   - pandas
   - pip:
-      - python-dotenv
+      - python-dotenv    
       - tushare
       - tqdm
+      - gymnasium>=0.29.1
+      - pyqlib
+      - matplotlib
+      - lightgbm
+      - xgboost
+      - catboost
+      - torch

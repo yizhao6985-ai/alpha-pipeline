@@ -5,13 +5,17 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-from tqdm import tqdm
-
-from .base import get_tushare_pro, save_csv, file_exists_and_not_empty
+from .base import (
+    get_tushare_pro,
+    retry_if_triplet_api_error,
+    run_parallel_with_rate_limit_retries,
+    save_csv,
+    file_exists_and_not_empty,
+    triplet_indicates_success,
+)
 
 # Tushare API 限流控制
 _MIN_API_INTERVAL = 0.05  # 最小请求间隔（秒），约 20 QPS
@@ -119,18 +123,101 @@ def fetch_index_weight(
 
     print(f"指数权重: 共 {len(index_codes)} 个，{len(existing)} 个已存在，需下载 {len(to_download)} 个")
 
-    with tqdm(total=len(index_codes), desc="指数权重", initial=len(existing)) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_single_index_weight,
-                    index_code,
-                    output_dir,
-                    today_ymd,
-                    pro,
-                ): index_code
-                for index_code in to_download
-            }
-            for future in as_completed(futures):
-                future.result()
-                pbar.update(1)
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_index_weight(code, output_dir, today_ymd, pro)
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "指数权重",
+        "个",
+    )
+
+
+def _fetch_single_index_daily(
+    index_code: str,
+    output_dir: Path,
+    today_ymd: str,
+    start_date: str,
+    end_date: str,
+    pro,
+) -> tuple[str, bool, int]:
+    """获取单个指数的日线行情"""
+    path = output_dir / today_ymd / "index" / "index_daily" / f"{index_code.replace('.', '_')}.csv"
+    
+    if file_exists_and_not_empty(path):
+        return index_code, True, 0  # 已存在
+    
+    try:
+        df = _rate_limited_api_call(
+            pro.index_daily, 
+            ts_code=index_code,
+            start_date=start_date,
+            end_date=end_date
+        )
+        if df is None or df.empty:
+            return index_code, False, 0
+        save_csv(df, path)
+        return index_code, True, len(df)
+    except Exception as e:
+        return index_code, False, -1
+
+
+def fetch_index_daily(
+    output_dir: Path,
+    today_ymd: str,
+    index_codes: list[str],
+    start_date: str,
+    end_date: str,
+    max_workers: int = 4,
+) -> None:
+    """获取指数日线行情（并发）
+    
+    根据 Tushare 文档，index_daily 返回字段：
+    - ts_code: 指数代码
+    - trade_date: 交易日期
+    - close: 收盘点位
+    - open: 开盘点位
+    - high: 最高点位
+    - low: 最低点位
+    - pre_close: 昨日收盘点
+    - change: 涨跌点
+    - pct_chg: 涨跌幅(%)
+    - vol: 成交量（手）
+    - amount: 成交额（千元）
+    """
+    if not index_codes:
+        return
+    
+    pro = get_tushare_pro()
+    
+    target_dir = output_dir / today_ymd / "index" / "index_daily"
+    existing_codes = _get_existing_index_codes_from_dir(target_dir)
+    
+    index_codes_set = set(index_codes)
+    existing = index_codes_set & existing_codes
+    to_download = list(index_codes_set - existing_codes)
+    
+    if not to_download:
+        print(f"指数行情: 全部 {len(index_codes)} 个指数已存在，跳过")
+        return
+    
+    print(f"指数行情: 共 {len(index_codes)} 个，{len(existing)} 个已存在，需下载 {len(to_download)} 个")
+
+    def _work(code: str) -> tuple[str, bool, int]:
+        return _fetch_single_index_daily(
+            code, output_dir, today_ymd, start_date, end_date, pro
+        )
+
+    run_parallel_with_rate_limit_retries(
+        to_download,
+        max_workers,
+        _work,
+        retry_if_triplet_api_error,
+        triplet_indicates_success,
+        "指数行情",
+        "个",
+    )
