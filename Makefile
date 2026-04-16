@@ -1,20 +1,21 @@
-# quant-data-foundry Makefile
+# alpha-pipeline Makefile（本地研究用；不设 pip 包，用仓库根当 PYTHONPATH）
+export PYTHONPATH := $(CURDIR)
 
 .PHONY: help env install fetch setup clean clean-all lint process test backtest activate info
 
 help:
-	@echo "quant-data-foundry 常用命令"
+	@echo "alpha-pipeline 常用命令"
 	@echo ""
 	@echo "  make env          - 创建 conda 环境"
 	@echo "  make activate     - 显示激活环境命令"
 	@echo "  make install      - 安装/更新依赖"
-	@echo "  make fetch        - 获取市场数据（scripts/fetch_market_data.py 默认参数）"
+	@echo "  make fetch        - 获取市场数据（scripts.tushare.fetch_market）"
 	@echo "  make setup        - 完整初始化（创建环境 + 配置模板）"
 	@echo "  make clean        - 清理行情与财报缓存"
 	@echo "  make lint         - 代码语法检查"
 	@echo "  make process      - 处理数据生成 Qlib 格式（可选 WORKERS=8）"
-	@echo "  make test         - 测试 Qlib 数据格式"
-	@echo "  make backtest - Qlib 训练 + 回测 + 出图（qlib_runs/plots）"
+	@echo "  make test         - 验证 qlib_data（scripts.verify_qlib.verify_bin）"
+	@echo "  make backtest     - Qlib 训练+回测（scripts.qlib run_backtest）"
 	@echo ""
 	@echo "环境变量:"
 	@echo "  TUSHARE_TOKEN     - Tushare API Token（必需）"
@@ -26,7 +27,7 @@ env:
 activate:
 	@echo "请运行以下命令激活环境:"
 	@echo ""
-	@echo "  conda activate quant-data-foundry"
+	@echo "  conda activate alpha-pipeline"
 	@echo ""
 
 install:
@@ -41,7 +42,7 @@ setup: env
 	fi
 
 fetch:
-	python scripts/fetch_market_data.py
+	python -m scripts.tushare.fetch_market
 
 clean:
 	@echo "清理数据目录..."
@@ -58,18 +59,18 @@ clean-all:
 
 lint:
 	@echo "检查 Python 语法..."
-	@python -m compileall -q scripts qlib_lab
+	@python -m compileall -q scripts
 	@echo "语法检查通过"
 
 process:
-	python scripts/process_to_qlib.py $(if $(WORKERS),--workers $(WORKERS),)
+	python -m scripts.build_qlib.to_qlib $(if $(WORKERS),--workers $(WORKERS),)
 
 test:
 	@echo "测试 Qlib 数据格式..."
-	@python scripts/test_qlib_data.py
+	@python -m scripts.verify_qlib.verify_bin
 
 backtest:
-	PYTHONPATH=$(PWD) python -m qlib_lab.run_qlib_backtest --output-dir qlib_runs/plots
+	python -m scripts.qlib run_backtest --output-dir qlib_runs/plots
 
 info:
 	@echo "项目路径: $(PWD)"

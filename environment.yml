@@ -1,4 +1,4 @@
-name: quant-data-foundry
+name: alpha-pipeline
 channels:
   - defaults
   - conda-forge

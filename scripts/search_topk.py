@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""等价 ``make process`` / ``python -m scripts.build_qlib.to_qlib``。"""
+"""薄转发：``python scripts/search_topk.py`` → ``scripts.qlib.search_topk``。"""
 from __future__ import annotations
 
 import sys
@@ -9,7 +9,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.build_qlib.to_qlib import main
+from scripts.qlib.search_topk import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

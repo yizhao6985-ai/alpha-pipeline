@@ -1,6 +1,6 @@
-# quant-data-foundry
+# alpha-pipeline
 
-专注于 A 股市场数据获取的数据处理项目。
+本地研究用仓库：**不发布 pip 包**。在仓库根设 `PYTHONPATH=.`（`Makefile` 已 `export`），用 `python -m scripts…` 跑流程。
 
 ## 快速开始
 
@@ -12,71 +12,51 @@ make setup
 # TUSHARE_TOKEN=your_tushare_token_here
 
 # 3. 激活环境
-conda activate quant-data-foundry
+conda activate alpha-pipeline
 
 # 4. 获取演示数据（2只股票）
 make fetch-demo
 ```
 
-## 项目结构
+## 目录（同级含义清晰）
 
 ```
-quant-data-foundry/
-├── scripts/                   # 脚本入口
-│   ├── fetch_market_data.py          # 主数据获取脚本
-│   ├── fetchers/                     # 数据获取模块
-│   │   ├── base.py                   # 基础工具
-│   │   ├── stock.py                  # 股票数据
-│   │   ├── company.py                # 公司数据
-│   │   ├── index.py                  # 指数数据
-│   │   ├── market.py                 # 市场数据
-│   │   └── quote.py                  # 行情数据
-│   ├── process_to_qlib.py            # 原始数据 → Qlib bin
-│   ├── dump_bin.py                   # bin 写入（由 process 调用）
-│   └── test_qlib_data.py             # 数据自检
-├── qlib_lab/                  # Qlib 训练与回测（库）
-│   ├── handler/               # DataHandler
-│   ├── dataset/               # DatasetH
-│   ├── model/                 # LightGBM
-│   ├── strategy/              # 策略与 port_config 策略段
-│   ├── backtest/              # port_config 回测段、撮合默认值
-│   ├── training/              # 模型训练
-│   ├── runtime/               # qlib.init、mlruns 路径
-│   └── run_qlib_backtest.py   # 主 CLI
-├── data/                      # 原始数据输出目录
-├── Makefile                   # 快捷命令
-├── environment.yml            # Conda 环境配置
-└── .env.example               # 环境变量模板
+alpha-pipeline/
+├── scripts/
+│   ├── tushare/              # Tushare 拉数 → data/
+│   ├── build_qlib/           # 原始 CSV → qlib_data/ bin（仅转换）
+│   ├── verify_qlib/          # 转换结果自检（如 verify_bin）
+│   ├── qlib/                 # Qlib：__main__.py 统一入口 + run_backtest/search_topk/sweep_tail_features + 实现子包
+│   ├── fetch_market_data.py
+│   ├── process_to_qlib.py
+│   ├── test_qlib_data.py
+│   ├── run_backtest.py       # → qlib.run_backtest（薄转发）
+│   ├── search_topk.py
+│   └── sweep_tail_features.py
+├── notebooks/
+├── data/
+├── qlib_data/
+├── Makefile
+├── environment.yml
+└── .env.example
 ```
+
+**Qlib 命令推荐**：`python -m scripts.qlib run_backtest`、`search_topk`、`sweep_tail_features`（见 `python -m scripts.qlib -h`）。
+
+`scripts/qlib/` 内实现按子模块 `import`（如 `from scripts.qlib.handler import …`），**没有**星号聚合导出。
+
+不用 `make` 时，在仓库根：`export PYTHONPATH="$(pwd)"`。
 
 ## 常用命令
 
-### Makefile 快捷命令
-
 ```bash
-make help              # 显示所有命令
-make setup             # 初始化环境和配置
-make fetch             # 获取所有数据（所有主板股票）
-make fetch-quick       # 快速获取基础数据
-make fetch-demo        # 获取演示数据（2只股票）
-make fetch-stocks      # 获取指定股票
-make lint              # 代码检查
+make help
+make fetch          # → python -m scripts.tushare.fetch_market
+make process        # → python -m scripts.build_qlib.to_qlib
+make test           # → python -m scripts.verify_qlib.verify_bin
+make backtest       # → python -m scripts.qlib run_backtest
 ```
 
-### 示例
+其它：`python -m scripts.qlib search_topk`、`python -m scripts.qlib sweep_tail_features`（或直接 `-m scripts.qlib.search_topk`）。
 
-```bash
-# 快速获取基础数据（股票列表、指数、日历等）
-make fetch-quick
-
-# 获取指定股票数据
-make fetch-stocks CODES=600000.SH,000001.SZ
-
-# 获取所有主板股票数据（耗时较长）
-make fetch
-
-# 直接运行脚本
-python scripts/fetch_market_data.py --ts-codes 600000.SH,000001.SZ
-```
-
-更多命令见 `make help` 与各脚本 `--help`。
+更多见 `make help` 与各模块 `--help`。
