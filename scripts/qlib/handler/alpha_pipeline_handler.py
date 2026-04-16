@@ -1,17 +1,17 @@
-"""``QuantFoundryRawFields`` DataHandler：接 Qlib ``QlibDataLoader``。"""
+"""``AlphaPipelineRawFields`` DataHandler：接 Qlib ``QlibDataLoader``。"""
 from __future__ import annotations
 
 from qlib.contrib.data.handler import _DEFAULT_LEARN_PROCESSORS, check_transform_proc
 from qlib.data.dataset.handler import DataHandlerLP
 
-from scripts.qlib.handler.features.full import full_feature_config_unpruned
+from scripts.qlib.handler.features.lab_fixed_features import lab_fixed_feature_config
 from scripts.qlib.handler.label import DEFAULT_LABEL_EXPR
 
 
-class QuantFoundryRawFields(DataHandlerLP):
-    """Alpha158 + Alpha360（去重）+ 基本面/筹码/价量/成交额扩展；
+class AlphaPipelineRawFields(DataHandlerLP):
+    """默认特征为 ``handler.features.lab_fixed_features`` 中的固定列。
 
-    未传 ``feature_config`` 时默认为全量合并特征（见 ``handler.features.full``）。
+    未传 ``feature_config`` 时由 :func:`~scripts.qlib.handler.features.lab_fixed_features.lab_fixed_feature_config` 提供列清单。
     """
 
     def __init__(
@@ -63,7 +63,7 @@ class QuantFoundryRawFields(DataHandlerLP):
         )
 
     def get_feature_config(self) -> tuple[list[str], list[str]]:
-        return full_feature_config_unpruned()
+        return lab_fixed_feature_config()
 
     def get_label_config(self) -> tuple[list[str], list[str]]:
         return [DEFAULT_LABEL_EXPR], ["LABEL0"]

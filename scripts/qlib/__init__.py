@@ -4,7 +4,7 @@
 **入口**：``python -m scripts.qlib <子命令>``（见 ``__main__.py``），或直接
 ``python -m scripts.qlib.run_backtest``；仓库根 ``scripts/run_backtest.py`` 等为薄转发。
 
-库内按子目录引用，例如 ``from scripts.qlib.handler import full_feature_config_unpruned``。
+库内按子目录引用，例如 ``from scripts.qlib.handler import lab_fixed_feature_config``。
 
 若环境已安装 ``gymnasium``，在此注册 ``gym`` → ``gymnasium`` 别名（未安装则跳过，避免拖垮整包导入）。
 """

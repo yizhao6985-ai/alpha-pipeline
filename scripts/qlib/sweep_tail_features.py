@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-按 LightGBM gain 从尾部按累计剔除比例做网格；单轮编排见 ``scripts.qlib.backtest.pipeline.run_backtest_pipeline``。
+按 LightGBM gain 从尾部按累计剔除比例做网格；单轮编排见 ``run_backtest_pipeline``。
 
 ::
 
@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.qlib.backtest.daily_runner import end_total_return_from_report_normal
 from scripts.qlib.backtest.pipeline import run_backtest_pipeline
+from scripts.qlib.model.importance import feature_importance_for_export, order_indices_by_gain
 from scripts.qlib.cli.backtest_args import build_arg_parser
-from scripts.qlib.handler import full_feature_config_unpruned
-from scripts.qlib.handler.features.importance_pick import order_indices_by_gain
+from scripts.qlib.dataset.from_args import (
+    _build_training_dataset_with_fields,
+    _feature_config_from_args,
+)
 from scripts.qlib.runtime import init_qlib_for_backtest
 
 
@@ -55,20 +57,6 @@ def parse_sweep_args():
     p = build_arg_parser()
     g = p.add_argument_group("尾部特征剔除网格（本模块）")
     g.add_argument(
-        "--money-stack-days",
-        type=int,
-        default=20,
-        metavar="N",
-        help="成交额堆叠长度（含当日），与 ``full_feature_config_unpruned`` 一致；例如 60 为长堆叠",
-    )
-    g.add_argument(
-        "--max-features",
-        type=int,
-        default=0,
-        metavar="K",
-        help="按 gain 仅保留前 K 列（须配合 --feature-importance-csv）；默认 0 为全量列",
-    )
-    g.add_argument(
         "--tail-min-pct",
         type=float,
         default=0.0,
@@ -104,14 +92,7 @@ def main() -> int:
 
     init_qlib_for_backtest(args)
 
-    if args.money_stack_days < 1:
-        raise SystemExit("--money-stack-days 须 >= 1")
-    max_feat = None if args.max_features <= 0 else args.max_features
-    full_fields, full_names = full_feature_config_unpruned(
-        money_stack_days=args.money_stack_days,
-        max_features=max_feat,
-        importance_csv=args.feature_importance_csv,
-    )
+    full_fields, full_names = _feature_config_from_args(args)
     n_full = len(full_names)
     if n_full == 0:
         raise SystemExit("全量特征为空")
@@ -120,15 +101,20 @@ def main() -> int:
     boot_exp = f"{args.experiment_name}_{prefix}_bootstrap".replace(".", "_")
     boot_out = out_root / f"{prefix}_bootstrap"
     print("--- bootstrap: 全量特征训练并回测，用于 gain 排序 ---", file=sys.stderr)
-    model_b, report_b, _, _ = run_backtest_pipeline(
+    model_b, boot_end_tr = run_backtest_pipeline(
         args,
-        feature_config=(full_fields, full_names),
         experiment_name=boot_exp,
         output_dir=boot_out,
     )
     if model_b.model is None:
         raise SystemExit("bootstrap 未得到模型，无法计算 feature importance")
-    fi0 = model_b.get_feature_importance(importance_type="gain")
+    fi0 = feature_importance_for_export(
+        model_b, column_labels=full_names, importance_type="gain"
+    )
+    if fi0 is None or len(fi0) == 0:
+        raise SystemExit(
+            "bootstrap 模型未返回 feature importance，无法按 gain 排序；请检查 LGBModel.get_feature_importance。"
+        )
     gain_map = {str(k): float(v) for k, v in fi0.items()}
     order_idx = order_indices_by_gain(full_names, gain_map)
     base_csv = out_root / "baseline_feature_importance.csv"
@@ -137,7 +123,6 @@ def main() -> int:
     ).to_csv(base_csv, index=False)
     print(f"已写出 gain 基准: {base_csv}", file=sys.stderr)
 
-    boot_end_tr = end_total_return_from_report_normal(report_b)
     rows: list[dict] = []
 
     for pct in grid:
@@ -158,10 +143,10 @@ def main() -> int:
                     "n_dropped": n_drop,
                     "experiment_name": boot_exp,
                     "artifact_subdir": str(sub_rel),
-                    "end_total_return": boot_end_tr,
+                    "portfolio_total_return": boot_end_tr,
                 }
             )
-            print(f"  end_total_return={boot_end_tr}（复用 bootstrap，与 tail_0 等价）", file=sys.stderr)
+            print(f"  portfolio_total_return={boot_end_tr}（复用 bootstrap）", file=sys.stderr)
             continue
 
         sub_f, sub_n = _subset_by_tail_pct(full_fields, full_names, order_idx, pct)
@@ -169,13 +154,13 @@ def main() -> int:
         sub_out = out_root / f"{prefix}_{pct:g}".replace(".", "_")
         sub_out.mkdir(parents=True, exist_ok=True)
 
-        _, report_normal, _, _ = run_backtest_pipeline(
+        sub_ds = _build_training_dataset_with_fields(args, sub_f, sub_n)
+        _, end_tr = run_backtest_pipeline(
             args,
-            feature_config=(sub_f, sub_n),
+            dataset=sub_ds,
             experiment_name=exp,
             output_dir=sub_out,
         )
-        end_tr = end_total_return_from_report_normal(report_normal)
 
         try:
             sub_rel = sub_out.relative_to(out_root)
@@ -188,10 +173,10 @@ def main() -> int:
                 "n_dropped": n_drop,
                 "experiment_name": exp,
                 "artifact_subdir": str(sub_rel),
-                "end_total_return": end_tr,
+                "portfolio_total_return": end_tr,
             }
         )
-        print(f"  end_total_return={end_tr}", file=sys.stderr)
+        print(f"  portfolio_total_return={end_tr}", file=sys.stderr)
 
     sweep_csv = out_root / "tail_feature_sweep.csv"
     pd.DataFrame(rows).to_csv(sweep_csv, index=False)

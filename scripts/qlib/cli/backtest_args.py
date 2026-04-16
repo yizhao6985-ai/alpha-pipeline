@@ -1,4 +1,5 @@
 """训练/回测类 CLI 共用的 ``argparse``（根目录 ``run_backtest`` / ``search_topk`` 等与 ``scripts.qlib`` 共用）。"""
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path("qlib_runs") / "plots",
         help="输出目录：默认写入 feature_importance.csv",
     )
-    p.add_argument("--experiment-name", type=str, default="quant_foundry_topk")
+    p.add_argument("--experiment-name", type=str, default="qlpha-pipeline_topk")
     p.add_argument("--account", type=float, default=100_000.0, help="回测初始资金")
     p.add_argument(
         "--benchmark",
@@ -71,23 +72,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="训练用标签（默认 T+1 收盘相对 T 日收盘，须配合收盘撮合价）",
     )
     p.add_argument(
-        "--feature-importance-csv",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "与 --feature-top-k>0 联用：gain CSV（列 feature, importance_gain）；"
-            "省略则用环境变量 QLIB_LAB_FEATURE_IMPORTANCE_CSV 或 qlib/handler/features 下 feature_importance_baseline.csv"
-        ),
+        "--topk", type=int, default=4, help="收盘调仓 TopK：每日尾盘持仓只数"
     )
-    p.add_argument(
-        "--feature-top-k",
-        type=int,
-        default=0,
-        metavar="K",
-        help="按 importance_gain 保留前 K 列（须配合 CSV）；默认 0 为全量合并特征（不读 CSV）",
-    )
-    p.add_argument("--topk", type=int, default=4, help="收盘调仓 TopK：每日尾盘持仓只数")
     p.add_argument(
         "--risk-degree",
         type=float,

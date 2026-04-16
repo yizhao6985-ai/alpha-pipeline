@@ -6,32 +6,24 @@ import sys
 from typing import Any
 
 from scripts.qlib.dataset.factory import build_dataset
-from scripts.qlib.handler import build_training_handler, full_feature_config_unpruned
+from scripts.qlib.handler import build_training_handler, lab_fixed_feature_config
 
 
-def build_training_dataset(
-    args: argparse.Namespace,
-    *,
-    feature_config: tuple[list[str], list[str]] | None = None,
-) -> Any:
+def _feature_config_from_args(args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    """与 ``build_training_dataset`` 一致；特征集为 ``lab_fixed_features`` 固定列，不读 ``args``。"""
+    _ = args
+    return lab_fixed_feature_config()
+
+
+def build_training_dataset(args: argparse.Namespace) -> Any:
     """在已 ``qlib.init`` 的环境下构建训练用 ``Dataset``。
 
-    ``feature_config`` 非空时直接使用，否则为 ``full_feature_config_unpruned()``：
-    默认 ``--feature-top-k 0`` 为全量列；``K>0`` 时按 ``--feature-importance-csv``（或环境变量 /
-    baseline 路径）的 gain 截取前 K 列。
+    特征为 ``handler.features.lab_fixed_features`` 中定义的固定列，不接受外部 ``feature_config``。
     """
     data_start, data_end = args.data_range
     fit_start, fit_end = args.train
 
-    if feature_config is not None:
-        feat_cfg = feature_config
-    else:
-        top_k = int(getattr(args, "feature_top_k", 0))
-        fi_csv = getattr(args, "feature_importance_csv", None)
-        feat_cfg = full_feature_config_unpruned(
-            max_features=None if top_k <= 0 else top_k,
-            importance_csv=fi_csv,
-        )
+    feat_cfg = _feature_config_from_args(args)
     print(f"训练特征: {len(feat_cfg[0])} 列", file=sys.stderr)
 
     handler = build_training_handler(
@@ -42,6 +34,31 @@ def build_training_dataset(
         data_end_time=data_end,
         label_expr=args.label_expr,
         feature_config=feat_cfg,
+    )
+    return build_dataset(
+        handler,
+        train=tuple(args.train),
+        valid=tuple(args.valid),
+        test=tuple(args.test),
+    )
+
+
+def _build_training_dataset_with_fields(
+    args: argparse.Namespace,
+    fields: list[str],
+    names: list[str],
+) -> Any:
+    """与 ``build_training_dataset`` 相同数据分段与 handler 设置，仅特征子集不同（仅 ``sweep_tail_features`` 使用）。"""
+    data_start, data_end = args.data_range
+    fit_start, fit_end = args.train
+    handler = build_training_handler(
+        instruments=args.instruments,
+        fit_start_time=fit_start,
+        fit_end_time=fit_end,
+        data_start_time=data_start,
+        data_end_time=data_end,
+        label_expr=args.label_expr,
+        feature_config=(fields, names),
     )
     return build_dataset(
         handler,
