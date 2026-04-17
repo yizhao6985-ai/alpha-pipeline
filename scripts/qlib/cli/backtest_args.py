@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from scripts.qlib.handler.label import DEFAULT_LABEL_EXPR
+from scripts.qlib.runtime.constants import normalize_writable_path
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -80,8 +81,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=0.95,
         help="仓位占资金比例上限（Topk 策略 risk_degree）",
     )
+    p.add_argument(
+        "--dump-train-csv",
+        action="store_true",
+        help="训练开始前导出 train 段特征/标签矩阵到 <output-dir>/train_matrix_preview/（CSV，数据量大时慎用）",
+    )
     return p
 
 
+def finalize_backtest_cli_args(ns: argparse.Namespace) -> argparse.Namespace:
+    """统一修正 ``--output-dir`` 等路径（须在 parse 之后调用）。"""
+    ns.output_dir = normalize_writable_path(ns.output_dir)
+    return ns
+
+
 def parse_args() -> argparse.Namespace:
-    return build_arg_parser().parse_args()
+    return finalize_backtest_cli_args(build_arg_parser().parse_args())

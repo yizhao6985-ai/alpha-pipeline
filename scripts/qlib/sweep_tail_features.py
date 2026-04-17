@@ -16,7 +16,7 @@ import pandas as pd
 
 from scripts.qlib.backtest.pipeline import run_backtest_pipeline
 from scripts.qlib.model.importance import feature_importance_for_export, order_indices_by_gain
-from scripts.qlib.cli.backtest_args import build_arg_parser
+from scripts.qlib.cli.backtest_args import build_arg_parser, finalize_backtest_cli_args
 from scripts.qlib.dataset.from_args import (
     _build_training_dataset_with_fields,
     _feature_config_from_args,
@@ -80,12 +80,12 @@ def parse_sweep_args():
         default="tail",
         help="各档输出子目录名前缀：{prefix}_{pct}/；bootstrap 为 {prefix}_bootstrap/",
     )
-    return p.parse_args()
+    return finalize_backtest_cli_args(p.parse_args())
 
 
 def main() -> int:
     args = parse_sweep_args()
-    out_root = args.output_dir.expanduser().resolve()
+    out_root = args.output_dir
     out_root.mkdir(parents=True, exist_ok=True)
 
     grid = _tail_pct_grid(args.tail_min_pct, args.tail_max_pct, args.tail_step_pct)

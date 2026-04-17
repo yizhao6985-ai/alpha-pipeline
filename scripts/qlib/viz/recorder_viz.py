@@ -27,6 +27,7 @@ from scripts.qlib.viz.plots.pred_lastday_hist import plot_pred_lastday_hist
 from scripts.qlib.viz.plots.rank_ic_cumulative import plot_rank_ic_cumulative
 from scripts.qlib.viz.plots.rank_ic_histogram import plot_rank_ic_histogram
 from scripts.qlib.viz.plots.rank_ic_line import plot_rank_ic_line
+from scripts.qlib.runtime.constants import normalize_writable_path
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def visualize_from_recorder(
 
     返回已成功写入的文件路径。
     """
-    root = Path(output_dir).expanduser().resolve() / subdir
+    root = normalize_writable_path(output_dir) / subdir
     written: list[Path] = []
 
     pred = _try_load(recorder, _PRED)

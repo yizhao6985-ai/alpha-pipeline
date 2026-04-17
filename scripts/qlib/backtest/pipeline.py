@@ -11,6 +11,8 @@ from qlib.workflow.record_temp import PortAnaRecord, SigAnaRecord, SignalRecord
 
 from scripts.qlib.backtest.config import build_port_config_from_args
 from scripts.qlib.dataset import build_training_dataset
+from scripts.qlib.dataset.dump_train_matrix import dump_train_segment_csv
+from scripts.qlib.runtime.constants import normalize_writable_path
 from scripts.qlib.model import feature_importance_for_export, fit_model_generate_pred
 from scripts.qlib.viz.recorder_viz import account_total_return_from_recorder, visualize_from_recorder
 
@@ -64,13 +66,21 @@ def run_backtest_pipeline(
         port_config = build_port_config_from_args(args)
 
     exp = experiment_name if experiment_name is not None else args.experiment_name
-    out_dir = Path(output_dir).expanduser().resolve() if output_dir is not None else args.output_dir.resolve()
+    out_dir = (
+        normalize_writable_path(output_dir)
+        if output_dir is not None
+        else normalize_writable_path(args.output_dir)
+    )
 
     print(
         "回测: SignalRecord → SigAnaRecord → PortAnaRecord；"
         f"deal_price={port_config['backtest']['exchange_kwargs']['deal_price']}",
         flush=True,
     )
+
+    if not only_backtest and getattr(args, "dump_train_csv", False):
+        fp, lp = dump_train_segment_csv(dataset, out_dir)
+        print(f"已导出 train 矩阵供核对: {fp}\n{lp}", flush=True)
 
     with R.start(experiment_name=exp):
         if not only_backtest:

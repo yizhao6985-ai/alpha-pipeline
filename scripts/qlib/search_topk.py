@@ -16,7 +16,7 @@ from qlib.workflow import R
 
 from scripts.qlib.backtest.config import build_port_config_from_args
 from scripts.qlib.backtest.pipeline import run_backtest_pipeline
-from scripts.qlib.cli.backtest_args import build_arg_parser
+from scripts.qlib.cli.backtest_args import build_arg_parser, finalize_backtest_cli_args
 from scripts.qlib.dataset import build_training_dataset
 from scripts.qlib.model import fit_model_generate_pred
 from scripts.qlib.runtime import init_qlib_for_backtest
@@ -34,7 +34,7 @@ def parse_sweep_args():
     g.add_argument("--topk-min", type=int, default=1, dest="topk_min")
     g.add_argument("--topk-max", type=int, default=20, dest="topk_max")
     g.add_argument("--topk-step", type=int, default=1, dest="topk_step")
-    return p.parse_args()
+    return finalize_backtest_cli_args(p.parse_args())
 
 
 def resolve_topk_list(args) -> list[int]:
@@ -56,7 +56,7 @@ def resolve_topk_list(args) -> list[int]:
 
 def main() -> int:
     args = parse_sweep_args()
-    out_dir = args.output_dir.expanduser().resolve()
+    out_dir = args.output_dir
     topks = resolve_topk_list(args)
     init_qlib_for_backtest(args)
     dataset = build_training_dataset(args)
