@@ -13,8 +13,8 @@ from scripts.qlib.strategy.constants import (
 def build_port_config_from_args(args: argparse.Namespace) -> dict:
     """``backtest_daily`` / ``PortAnaRecord`` 用 ``port_config``（收盘 TopK + 交易所段）。"""
     if args.benchmark.lower() in {"none", ""}:
-        benchmark = "SH000510"
-        print("提示: benchmark 为空时已改用 SH000510（中证A500）作基准。")
+        benchmark = "SH000300"
+        print("提示: benchmark 为空时已改用 SH000300（沪深300）作基准。")
     else:
         benchmark = args.benchmark
 
@@ -25,6 +25,7 @@ def build_port_config_from_args(args: argparse.Namespace) -> dict:
             "kwargs": {
                 "signal": "<PRED>",
                 "topk": args.topk,
+                "n_drop": args.n_drop,
                 "risk_degree": args.risk_degree,
                 "only_tradable": True,
                 "forbid_all_trade_at_limit": False,

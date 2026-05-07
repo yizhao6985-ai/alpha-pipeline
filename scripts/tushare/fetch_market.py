@@ -24,7 +24,6 @@ from scripts.tushare.fetchers import (
     fetch_trade_calendar,
     fetch_qfq_daily,
     fetch_daily_basic,
-    fetch_cyq_perf,
     get_tushare_pro,
 )
 
@@ -33,10 +32,11 @@ import pandas as pd
 # 常量
 DEFAULT_FETCH_START_DATE = "20180101"
 # 默认指数代码：中证全指、中证100、沪深300、中证500、中证1000、中证A500
+# 沪深300 须用 000300.SH：to_qlib 映射为 SH000300，与回测默认基准一致（399300.SZ 会变为 SZ399300）
 DEFAULT_INDEX_CODES = [
     "000985.CSI",  # 中证全指
     "000903.SH",  # 中证100
-    "399300.SZ",  # 沪深300
+    "000300.SH",  # 沪深300（Qlib 基准 SH000300）
     "000905.SH",  # 中证500
     "000852.SH",  # 中证1000
     "000510.CSI",  # 中证A500
@@ -63,7 +63,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-calendar", action="store_true", help="跳过交易日历")
     parser.add_argument("--skip-qfq-daily", action="store_true", help="跳过日线行情")
     parser.add_argument("--skip-daily-basic", action="store_true", help="跳过每日指标")
-    parser.add_argument("--skip-cyq", action="store_true", help="跳过每日筹码及胜率")
     parser.add_argument("--skip-financial", action="store_true", help="跳过财务报表")
     parser.add_argument("--workers", type=int, default=8, help="并发下载线程数，默认 8")
     return parser
@@ -146,9 +145,6 @@ def main():
 
         if not args.skip_daily_basic:
             fetch_daily_basic(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
-
-        if not args.skip_cyq:
-            fetch_cyq_perf(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)
 
         if not args.skip_financial:
             fetch_financial_statements(output_dir, end_date, ts_codes, start_date, end_date, max_workers=args.workers)

@@ -25,7 +25,18 @@ def plot_portfolio_monthly_heatmap(report: pd.DataFrame, path: Path) -> None:
             except KeyError:
                 pass
     fig, ax = plt.subplots(figsize=(14, max(4.0, len(years) * 0.45)))
-    im = ax.imshow(mat, aspect="auto", cmap="YlGnBu")
+    finite = mat[np.isfinite(mat)]
+    if finite.size:
+        absmax = max(float(np.nanmax(np.abs(finite))), 1e-9)
+        im = ax.imshow(
+            mat,
+            aspect="auto",
+            cmap="RdYlGn",
+            vmin=-absmax,
+            vmax=absmax,
+        )
+    else:
+        im = ax.imshow(mat, aspect="auto", cmap="RdYlGn")
     plt.colorbar(im, ax=ax, fraction=0.02, pad=0.02)
     ax.set_xticks(range(12))
     ax.set_xticklabels([str(m) for m in months])

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 按 LightGBM gain 从尾部按累计剔除比例做网格；单轮编排见 ``run_backtest_pipeline``。
+默认在 ``--output-dir`` 下再建 ``sweep_tail_features/`` 子目录，内含 ``tail_bootstrap/``、各 ``tail_<pct>/`` 与 ``tail_feature_sweep.csv``。
 
 ::
 
@@ -22,6 +23,21 @@ from scripts.qlib.dataset.from_args import (
     _feature_config_from_args,
 )
 from scripts.qlib.runtime import init_qlib_for_backtest
+from scripts.qlib.runtime.constants import normalize_writable_path
+
+
+def _read_sigana_mean_from_out_dir(out_dir: Path, name: str) -> float | None:
+    """从 ``record_viz/sig_analysis/{ic|rank_ic}_stats.csv`` 读取单列 ``mean``。"""
+    p = Path(out_dir) / "record_viz" / "sig_analysis" / f"{name}_stats.csv"
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_csv(p)
+    except Exception:  # noqa: BLE001
+        return None
+    if df.empty or "mean" not in df.columns:
+        return None
+    return float(df["mean"].iloc[0])
 
 
 def _subset_by_tail_pct(
@@ -80,12 +96,26 @@ def parse_sweep_args():
         default="tail",
         help="各档输出子目录名前缀：{prefix}_{pct}/；bootstrap 为 {prefix}_bootstrap/",
     )
+    g.add_argument(
+        "--sweep-parent-subdir",
+        type=str,
+        default="sweep_tail_features",
+        metavar="NAME",
+        help="在 --output-dir 下再建一层子目录存放 bootstrap、各 tail 档与 tail_feature_sweep.csv；"
+        "设为空字符串 '' 则直接写在 output-dir 下（旧布局）",
+    )
     return finalize_backtest_cli_args(p.parse_args())
+
+
+def _sweep_root_for_tail(args) -> Path:
+    base = normalize_writable_path(args.output_dir)
+    sub = (getattr(args, "sweep_parent_subdir", None) or "").strip()
+    return base if not sub else (base / sub)
 
 
 def main() -> int:
     args = parse_sweep_args()
-    out_root = args.output_dir
+    out_root = _sweep_root_for_tail(args)
     out_root.mkdir(parents=True, exist_ok=True)
 
     grid = _tail_pct_grid(args.tail_min_pct, args.tail_max_pct, args.tail_step_pct)
@@ -144,6 +174,8 @@ def main() -> int:
                     "experiment_name": boot_exp,
                     "artifact_subdir": str(sub_rel),
                     "portfolio_total_return": boot_end_tr,
+                    "sigana_ic_mean": _read_sigana_mean_from_out_dir(boot_out, "ic"),
+                    "sigana_rank_ic_mean": _read_sigana_mean_from_out_dir(boot_out, "rank_ic"),
                 }
             )
             print(f"  portfolio_total_return={boot_end_tr}（复用 bootstrap）", file=sys.stderr)
@@ -174,13 +206,21 @@ def main() -> int:
                 "experiment_name": exp,
                 "artifact_subdir": str(sub_rel),
                 "portfolio_total_return": end_tr,
+                "sigana_ic_mean": _read_sigana_mean_from_out_dir(sub_out, "ic"),
+                "sigana_rank_ic_mean": _read_sigana_mean_from_out_dir(sub_out, "rank_ic"),
             }
         )
         print(f"  portfolio_total_return={end_tr}", file=sys.stderr)
 
     sweep_csv = out_root / "tail_feature_sweep.csv"
     pd.DataFrame(rows).to_csv(sweep_csv, index=False)
+    parent = normalize_writable_path(args.output_dir)
+    try:
+        rel = out_root.relative_to(parent)
+    except ValueError:
+        rel = out_root
     print(f"已写入: {sweep_csv}", file=sys.stderr)
+    print(f"本网格目录: {out_root}（相对 --output-dir: {rel}）", file=sys.stderr)
     return 0
 
 

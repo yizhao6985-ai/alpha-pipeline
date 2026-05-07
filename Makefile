@@ -42,7 +42,7 @@ setup: env
 	fi
 
 fetch:
-	python -m scripts.tushare.fetch_market
+	python -m scripts.tushare.fetch_market --end-date 20260414
 
 clean:
 	@echo "清理数据目录..."

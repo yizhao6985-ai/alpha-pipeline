@@ -5,6 +5,9 @@
     python -m scripts.qlib run_backtest --output-dir qlib_runs/plots
     python -m scripts.qlib search_topk --topks 1,3,5
     python -m scripts.qlib sweep_tail_features --tail-min-pct 0 --tail-max-pct 30 --tail-step-pct 5
+    python -m scripts.qlib sweep_feature_group
+    python -m scripts.qlib sweep_feature_group --feature-names SWEEP_BETA15
+    python -m scripts.qlib sweep_pca_feature_groups --list-groups
 
 也可直接 ``python -m scripts.qlib.run_backtest`` 等；根目录 ``scripts/run_backtest.py`` 为薄转发。
 """
@@ -17,6 +20,8 @@ _COMMANDS: dict[str, str] = {
     "run_backtest": "scripts.qlib.run_backtest",
     "search_topk": "scripts.qlib.search_topk",
     "sweep_tail_features": "scripts.qlib.sweep_tail_features",
+    "sweep_feature_group": "scripts.qlib.sweep_feature_group",
+    "sweep_pca_feature_groups": "scripts.qlib.sweep_pca_feature_groups",
 }
 
 

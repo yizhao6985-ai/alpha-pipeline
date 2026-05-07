@@ -14,7 +14,26 @@ from scripts.qlib.dataset import build_training_dataset
 from scripts.qlib.dataset.dump_train_matrix import dump_train_segment_csv
 from scripts.qlib.runtime.constants import normalize_writable_path
 from scripts.qlib.model import feature_importance_for_export, fit_model_generate_pred
+from scripts.qlib.viz.feature_tail_diag import write_feature_tail_diag_csv
 from scripts.qlib.viz.recorder_viz import account_total_return_from_recorder, visualize_from_recorder
+from scripts.qlib.viz.segment_ic import write_segment_ic_csv
+
+
+def _attach_strategy_daily_log_csv(port_config: dict[str, Any], out_dir: Path) -> None:
+    """将每日策略决策 CSV 路径写入 ``port_config``，并在新回测开始前清空旧文件。"""
+    path = out_dir / "strategy_daily_log.csv"
+    try:
+        strat = port_config.get("strategy")
+        if not isinstance(strat, dict):
+            return
+        kw = strat.setdefault("kwargs", {})
+        if not isinstance(kw, dict):
+            return
+        kw["strategy_daily_log_csv"] = str(path)
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
 
 
 def _run_qlib_record_backtest(
@@ -71,6 +90,7 @@ def run_backtest_pipeline(
         if output_dir is not None
         else normalize_writable_path(args.output_dir)
     )
+    _attach_strategy_daily_log_csv(port_config, out_dir)
 
     print(
         "回测: SignalRecord → SigAnaRecord → PortAnaRecord；"
@@ -85,6 +105,13 @@ def run_backtest_pipeline(
     with R.start(experiment_name=exp):
         if not only_backtest:
             model = fit_model_generate_pred(args, dataset)
+        seg_csv = write_segment_ic_csv(
+            model,
+            dataset,
+            out_dir / "segment_ic_stats.csv",
+        )
+        if seg_csv is not None:
+            print(f"已写入分段 IC 诊断: {seg_csv}", flush=True)
         recorder = R.get_recorder()
         _ = _run_qlib_record_backtest(
             model,
@@ -114,6 +141,11 @@ def run_backtest_pipeline(
                 "警告: 无法导出 feature_importance（get_feature_importance 为空或与数据集列名无法对齐）。",
                 flush=True,
             )
+
+    tail_diag = out_dir / "feature_importance.csv"
+    tail_out = write_feature_tail_diag_csv(tail_diag, out_dir / "feature_importance_tail_diag.csv")
+    if tail_out is not None:
+        print(f"已写入特征长尾诊断: {tail_out}", flush=True)
 
     print(f"完成。输出目录: {out_dir}", flush=True)
 

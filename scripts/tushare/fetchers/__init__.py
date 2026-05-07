@@ -9,7 +9,7 @@ from .stock import fetch_stock_list, fetch_stock_st
 from .company import fetch_company_basic_info, fetch_financial_statements
 from .index import fetch_index_basic, fetch_index_weight, fetch_index_daily
 from .market import fetch_trade_calendar
-from .quote import fetch_qfq_daily, fetch_daily_basic, fetch_cyq_perf
+from .quote import fetch_qfq_daily, fetch_daily_basic
 
 __all__ = [
     # base
@@ -32,5 +32,4 @@ __all__ = [
     # quote
     "fetch_qfq_daily",
     "fetch_daily_basic",
-    "fetch_cyq_perf",
 ]

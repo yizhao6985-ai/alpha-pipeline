@@ -4,11 +4,10 @@
 
 功能：
 1. 排除 ST 股票
-2. 合并行情 + 筹码 + **Tushare daily_basic**（`quote/basic/*.csv`：PE/PB/换手/市值等）
+2. 合并行情 + **Tushare daily_basic**（`quote/basic/*.csv`：PE/PB/换手/市值等）
 3. 通过同目录 `dump_bin.py` 生成 `features/*.day.bin` 等标准目录
 
-筹码表保留字段 ``weight_avg``（非 VWAP）。``vwap_approx = (high+low+close)/3`` 为典型价近似；
-另写入 ``vwap``（与 ``vwap_approx`` 相同数值）供 Qlib Alpha158 的 ``$vwap`` 表达式使用。
+``vwap_approx = (high+low+close)/3`` 为典型价近似；另写入 ``vwap``（与 ``vwap_approx`` 相同数值）供 Qlib Alpha158 的 ``$vwap`` 表达式使用。
 输出宽表不包含 ``pre_close``（昨收可用 ``Ref($close, 1)``）。
 
 `calendars/day.txt` 使用 `dump_bin.write_calendars`；`instruments/*.txt` 均使用
@@ -42,7 +41,7 @@ from scripts.build_qlib.dump_bin import DumpDataAll, make_process_bin_writer, wr
 
 # 指数代码映射
 INDEX_CODES = {
-    "csi300": "399300.SZ",    # 沪深300
+    "csi300": "000300.SH",  # 沪深300（与 Qlib SH000300、Tushare 权重/日线 000300_SH 一致）
     "csi500": "000905.SH",    # 中证500
     "csi100": "000903.SH",    # 中证100
     "csi1000": "000852.SH",   # 中证1000
@@ -68,7 +67,6 @@ DAILY_BASIC_COLS: tuple[str, ...] = (
     "total_mv",
     "dv_ratio",
 )
-
 
 def find_latest_data_dir(data_root: Path) -> str:
     """找到最新的数据日期目录"""
@@ -105,26 +103,32 @@ def load_index_components(data_dir: Path, date_str: str) -> dict[str, set[str]]:
     if not index_weight_dir.exists():
         return components
     
-    # 指数代码到文件名的映射
+    # 指数代码到文件名的映射（csi300 优先 000300_SH，兼容旧版 399300_SZ）
     index_file_map = {
-        "csi300": "399300_SZ.csv",
-        "csi500": "000905_SH.csv",
-        "csi100": "000903_SH.csv",
-        "csi1000": "000852_SH.csv",
-        "csi_all": "000985_CSI.csv",
-        "csi_a500": "000510_CSI.csv",
+        "csi300": ("000300_SH.csv", "399300_SZ.csv"),
+        "csi500": ("000905_SH.csv",),
+        "csi100": ("000903_SH.csv",),
+        "csi1000": ("000852_SH.csv",),
+        "csi_all": ("000985_CSI.csv",),
+        "csi_a500": ("000510_CSI.csv",),
     }
-    
-    for index_name, filename in index_file_map.items():
-        file_path = index_weight_dir / filename
-        if file_path.exists():
-            try:
-                df = pd.read_csv(file_path, encoding="utf-8")
-                # 从 con_code 列获取成分股代码
-                if "con_code" in df.columns:
-                    components[index_name] = set(df["con_code"].astype(str).tolist())
-            except Exception:
-                continue
+
+    for index_name, candidates in index_file_map.items():
+        file_path = None
+        for fn in candidates:
+            p = index_weight_dir / fn
+            if p.exists():
+                file_path = p
+                break
+        if file_path is None:
+            continue
+        try:
+            df = pd.read_csv(file_path, encoding="utf-8")
+            # 从 con_code 列获取成分股代码
+            if "con_code" in df.columns:
+                components[index_name] = set(df["con_code"].astype(str).tolist())
+        except Exception:
+            continue
     
     return components
 
@@ -135,14 +139,6 @@ def get_qfq_files(data_dir: Path, date_str: str) -> list[Path]:
     if not qfq_dir.exists():
         return []
     return list(qfq_dir.glob("*.csv"))
-
-
-def get_cyq_files(data_dir: Path, date_str: str) -> list[Path]:
-    """获取所有筹码分布文件列表"""
-    cyq_dir = data_dir / date_str / "quote" / "cyq"
-    if not cyq_dir.exists():
-        return []
-    return list(cyq_dir.glob("*.csv"))
 
 
 def get_basic_files(data_dir: Path, date_str: str) -> list[Path]:
@@ -199,11 +195,6 @@ def format_date(date_str: str | int) -> str:
     return d
 
 
-def date_to_qlib_int(date_str: str) -> int:
-    """将 YYYY-MM-DD 转换为 Qlib 内部使用的整数格式 YYYYMMDD"""
-    return int(date_str.replace("-", ""))
-
-
 def _merge_daily_basic(qfq_df: pd.DataFrame, basic_file: Path | None) -> pd.DataFrame:
     """按交易日左连接 daily_basic；无文件或失败则原样返回。"""
     if basic_file is None or not basic_file.exists():
@@ -230,11 +221,10 @@ def _merge_daily_basic(qfq_df: pd.DataFrame, basic_file: Path | None) -> pd.Data
 
 def process_stock_data(
     qfq_file: Path,
-    cyq_file: Path | None,
     st_codes: set[str] | frozenset[str],
     basic_file: Path | None = None,
 ) -> pd.DataFrame | None:
-    """处理单只股票：前复权行情 + 筹码 + daily_basic（可选）。"""
+    """处理单只股票：前复权行情 + daily_basic（可选）。"""
     ts_code = extract_ts_code_from_filename(qfq_file.name)
     if not ts_code:
         return None
@@ -270,24 +260,6 @@ def process_stock_data(
         for col in required_cols:
             if col not in qfq_df.columns:
                 return None
-
-        # 合并筹码分布数据
-        if cyq_file and cyq_file.exists():
-            try:
-                cyq_df = pd.read_csv(cyq_file, encoding="utf-8")
-                if not cyq_df.empty:
-                    cyq_df = cyq_df.rename(columns={"trade_date": "date"})
-                    cyq_df["date"] = cyq_df["date"].apply(format_date)
-                    if "ts_code" in cyq_df.columns:
-                        cyq_df = cyq_df.drop(columns=["ts_code"])
-                    cyq_cols = ["date", "his_low", "his_high", "cost_5pct", "cost_15pct",
-                               "cost_50pct", "cost_85pct", "cost_95pct", "weight_avg", "winner_rate"]
-                    available_cyq_cols = [c for c in cyq_cols if c in cyq_df.columns]
-                    if available_cyq_cols:
-                        cyq_df = cyq_df[available_cyq_cols]
-                        qfq_df = qfq_df.merge(cyq_df, on="date", how="left")
-            except Exception:
-                pass
 
         qfq_df = _merge_daily_basic(qfq_df, basic_file)
 
@@ -367,7 +339,6 @@ def _add_vwap_typical_price(df: pd.DataFrame) -> pd.DataFrame:
 
 def _process_one_stock_worker(
     qfq_file: str,
-    cyq_file: str | None,
     basic_file: str | None,
     st_codes: frozenset[str],
 ) -> tuple[str, pd.DataFrame] | None:
@@ -378,7 +349,6 @@ def _process_one_stock_worker(
         return None
     df = process_stock_data(
         qfq_path,
-        Path(cyq_file) if cyq_file else None,
         st_codes,
         Path(basic_file) if basic_file else None,
     )
@@ -435,14 +405,6 @@ def process_all_data(
     
     print(f"找到 {len(qfq_files)} 只股票数据，正在处理...")
 
-    cyq_dir = data_dir / date_str / "quote" / "cyq"
-    cyq_file_map = {}
-    if cyq_dir.exists():
-        for f in cyq_dir.glob("*.csv"):
-            ts_code = extract_ts_code_from_filename(f.name)
-            if ts_code:
-                cyq_file_map[ts_code] = f
-
     basic_dir = data_dir / date_str / "quote" / "basic"
     basic_file_map: dict[str, Path] = {}
     if basic_dir.exists():
@@ -451,7 +413,6 @@ def process_all_data(
             if ts_code:
                 basic_file_map[ts_code] = f
 
-    print(f"  - 筹码分布数据: {len(cyq_file_map)} 只")
     print(f"  - daily_basic 基本面: {len(basic_file_map)} 只")
     
     skipped_st = sum(
@@ -464,17 +425,15 @@ def process_all_data(
     frozen_st = frozenset(st_codes)
     stock_data: dict[str, pd.DataFrame] = {}
 
-    tasks: list[tuple[str, str | None, str | None, frozenset[str]]] = []
+    tasks: list[tuple[str, str | None, frozenset[str]]] = []
     for qfq_file in qfq_files:
         ts_code = extract_ts_code_from_filename(qfq_file.name)
         if not ts_code or ts_code in st_codes:
             continue
-        cyq_f = cyq_file_map.get(ts_code)
         basic_f = basic_file_map.get(ts_code)
         tasks.append(
             (
                 str(qfq_file.resolve()),
-                str(cyq_f.resolve()) if cyq_f else None,
                 str(basic_f.resolve()) if basic_f else None,
                 frozen_st,
             )

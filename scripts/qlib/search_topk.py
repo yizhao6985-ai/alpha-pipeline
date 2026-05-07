@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 训练一次模型，对多个 ``topk`` 依次回测，按 recorder 落盘的组合 ``account`` 区间总收益选最优。
+默认在 ``--output-dir`` 下再建 ``search_topk/`` 子目录，内含 ``topk_sweep.csv`` 与各 ``topk_<K>/``。
 
 ::
 
@@ -20,6 +21,7 @@ from scripts.qlib.cli.backtest_args import build_arg_parser, finalize_backtest_c
 from scripts.qlib.dataset import build_training_dataset
 from scripts.qlib.model import fit_model_generate_pred
 from scripts.qlib.runtime import init_qlib_for_backtest
+from scripts.qlib.runtime.constants import normalize_writable_path
 
 
 def parse_sweep_args():
@@ -34,6 +36,14 @@ def parse_sweep_args():
     g.add_argument("--topk-min", type=int, default=1, dest="topk_min")
     g.add_argument("--topk-max", type=int, default=20, dest="topk_max")
     g.add_argument("--topk-step", type=int, default=1, dest="topk_step")
+    g.add_argument(
+        "--sweep-parent-subdir",
+        type=str,
+        default="search_topk",
+        metavar="NAME",
+        help="在 --output-dir 下再建一层子目录存放 topk_sweep.csv 与各 topk_<K>/；"
+        "设为空字符串 '' 则直接写在 output-dir 下（旧布局）",
+    )
     return finalize_backtest_cli_args(p.parse_args())
 
 
@@ -54,9 +64,15 @@ def resolve_topk_list(args) -> list[int]:
     return list(range(args.topk_min, args.topk_max + 1, args.topk_step))
 
 
+def _sweep_root_for_search_topk(args) -> Path:
+    base = normalize_writable_path(args.output_dir)
+    sub = (getattr(args, "sweep_parent_subdir", None) or "").strip()
+    return base if not sub else (base / sub)
+
+
 def main() -> int:
     args = parse_sweep_args()
-    out_dir = args.output_dir
+    out_dir = _sweep_root_for_search_topk(args)
     topks = resolve_topk_list(args)
     init_qlib_for_backtest(args)
     dataset = build_training_dataset(args)
@@ -106,8 +122,14 @@ def main() -> int:
     pd.DataFrame(rows).to_csv(sweep_path, index=False)
     print(f"已写入: {sweep_path}")
 
+    parent = normalize_writable_path(args.output_dir)
+    try:
+        rel = out_dir.relative_to(parent)
+    except ValueError:
+        rel = out_dir
     print(
-        f"完成。最优 topk={best_k}；输出目录: {out_dir}（含 topk_sweep.csv；各档见 topk_<K>/）"
+        f"完成。最优 topk={best_k}；本网格目录: {out_dir}（含 topk_sweep.csv；各档见 topk_<K>/）；"
+        f"相对 --output-dir 为 {rel}"
     )
     return 0
 

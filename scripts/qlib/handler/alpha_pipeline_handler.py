@@ -1,4 +1,5 @@
 """``AlphaPipelineRawFields`` DataHandler：接 Qlib ``QlibDataLoader``。"""
+
 from __future__ import annotations
 
 from qlib.contrib.data.handler import _DEFAULT_LEARN_PROCESSORS, check_transform_proc
@@ -16,7 +17,7 @@ class AlphaPipelineRawFields(DataHandlerLP):
 
     def __init__(
         self,
-        instruments: str = "csi_a500",
+        instruments: str = "csi300",
         start_time: str | None = None,
         end_time: str | None = None,
         freq: str = "day",
@@ -35,10 +36,16 @@ class AlphaPipelineRawFields(DataHandlerLP):
         if learn_processors is None:
             learn_processors = list(_DEFAULT_LEARN_PROCESSORS)
 
-        infer_processors = check_transform_proc(infer_processors, fit_start_time, fit_end_time)
-        learn_processors = check_transform_proc(learn_processors, fit_start_time, fit_end_time)
+        infer_processors = check_transform_proc(
+            infer_processors, fit_start_time, fit_end_time
+        )
+        learn_processors = check_transform_proc(
+            learn_processors, fit_start_time, fit_end_time
+        )
 
-        feat = feature_config if feature_config is not None else self.get_feature_config()
+        feat = (
+            feature_config if feature_config is not None else self.get_feature_config()
+        )
         data_loader = {
             "class": "QlibDataLoader",
             "kwargs": {

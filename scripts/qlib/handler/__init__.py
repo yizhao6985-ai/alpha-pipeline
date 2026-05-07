@@ -5,18 +5,23 @@ from scripts.qlib.handler.alpha_pipeline_handler import AlphaPipelineRawFields
 from scripts.qlib.handler.builder import build_training_handler
 from scripts.qlib.handler.features import (
     DEFAULT_HEAD_FEATURES,
+    FEATURE_PRESET_CHOICES,
     LAB_FIXED_FEATURES,
     lab_fixed_feature_config,
+    lab_fixed_feature_config_for_preset,
 )
 from scripts.qlib.handler.label import DEFAULT_LABEL_EXPR
-from scripts.qlib.handler.processors import default_infer_processors
+from scripts.qlib.handler.processors import default_infer_processors, default_learn_processors
 
 __all__ = [
     "DEFAULT_HEAD_FEATURES",
     "DEFAULT_LABEL_EXPR",
+    "FEATURE_PRESET_CHOICES",
     "LAB_FIXED_FEATURES",
     "AlphaPipelineRawFields",
     "build_training_handler",
     "default_infer_processors",
+    "default_learn_processors",
     "lab_fixed_feature_config",
+    "lab_fixed_feature_config_for_preset",
 ]

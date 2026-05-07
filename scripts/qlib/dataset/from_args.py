@@ -6,13 +6,19 @@ import sys
 from typing import Any
 
 from scripts.qlib.dataset.factory import build_dataset
-from scripts.qlib.handler import build_training_handler, lab_fixed_feature_config
+from scripts.qlib.handler import (
+    build_training_handler,
+    lab_fixed_feature_config,
+    lab_fixed_feature_config_for_preset,
+)
 
 
 def _feature_config_from_args(args: argparse.Namespace) -> tuple[list[str], list[str]]:
-    """与 ``build_training_dataset`` 一致；特征集为 ``lab_fixed_features`` 固定列，不读 ``args``。"""
-    _ = args
-    return lab_fixed_feature_config()
+    """默认与 CLI 一致（``full``=55 维全量特征，不含筹码）。"""
+    preset = getattr(args, "feature_preset", "full")
+    if preset == "full":
+        return lab_fixed_feature_config()
+    return lab_fixed_feature_config_for_preset(preset)
 
 
 def build_training_dataset(args: argparse.Namespace) -> Any:
@@ -24,7 +30,11 @@ def build_training_dataset(args: argparse.Namespace) -> Any:
     fit_start, fit_end = args.train
 
     feat_cfg = _feature_config_from_args(args)
-    print(f"训练特征: {len(feat_cfg[0])} 列", file=sys.stderr)
+    preset = getattr(args, "feature_preset", "full")
+    print(
+        f"训练特征: {len(feat_cfg[0])} 列 (preset={preset})",
+        file=sys.stderr,
+    )
 
     handler = build_training_handler(
         instruments=args.instruments,
@@ -34,6 +44,7 @@ def build_training_dataset(args: argparse.Namespace) -> Any:
         data_end_time=data_end,
         label_expr=args.label_expr,
         feature_config=feat_cfg,
+        feature_norm=getattr(args, "feature_norm", "robust_zscore"),
     )
     return build_dataset(
         handler,
@@ -59,6 +70,7 @@ def _build_training_dataset_with_fields(
         data_end_time=data_end,
         label_expr=args.label_expr,
         feature_config=(fields, names),
+        feature_norm=getattr(args, "feature_norm", "robust_zscore"),
     )
     return build_dataset(
         handler,

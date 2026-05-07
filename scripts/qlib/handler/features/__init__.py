@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from scripts.qlib.handler.features.lab_fixed_features import (
     DEFAULT_HEAD_FEATURES,
+    FEATURE_PRESET_CHOICES,
     LAB_FIXED_FEATURES,
     lab_fixed_feature_config,
+    lab_fixed_feature_config_for_preset,
 )
 
 __all__ = [
     "DEFAULT_HEAD_FEATURES",
+    "FEATURE_PRESET_CHOICES",
     "LAB_FIXED_FEATURES",
     "lab_fixed_feature_config",
+    "lab_fixed_feature_config_for_preset",
 ]
